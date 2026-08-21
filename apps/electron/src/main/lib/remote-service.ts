@@ -87,6 +87,7 @@ import { saveAttachment, readAttachmentAsBase64, deleteAttachment } from './atta
 import { chatEventBus } from './chat-stream-bus'
 import { resolveAndReadFile, readFileAsDataUrl } from './file-preview-service'
 import { resolveAuthorizedRemoteFilePath } from './remote-file-access'
+import { loadWorkspaceHeatmapDaily } from './workspace-heatmap-query'
 import { RemoteAgentEventLog, type RemoteAgentEventRecord } from './remote-agent-event-log'
 
 /** 正式版默认监听端口 */
@@ -842,6 +843,13 @@ async function handleCommand(
 
     case 'list_workspaces': {
       return { ok: true, data: buildWorkspaceList() }
+    }
+
+    case 'get_workspace_heatmap_daily': {
+      const workspaceId = typeof parsed.workspaceId === 'string' ? parsed.workspaceId : ''
+      if (!workspaceId) return { ok: false, error: '缺少 workspaceId' }
+
+      return { ok: true, data: loadWorkspaceHeatmapDaily(workspaceId) }
     }
 
     case 'create_workspace': {
