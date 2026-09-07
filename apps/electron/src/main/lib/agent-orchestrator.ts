@@ -169,7 +169,7 @@ import { injectAgentImageOutputMcpServer } from './agent-image-output-tools'
 import { injectAgentGptImageMcpServer, isAgentGptImageAvailable } from './agent-gpt-image-tools'
 import { injectAgentPreviewMcpServer } from './agent-preview-tools'
 import { agentFilePreviewSessionManager } from './agent-file-preview-session'
-import { injectPptMaterialMcpServer } from './ppt-material-agent-tools'
+import { injectPptDeliveryMcpServer } from './ppt-delivery-agent-tools'
 import { browserController } from './browser-controller'
 import {
   applySdkCredentials,
@@ -1269,7 +1269,7 @@ export class AgentOrchestrator {
         }
       }
       if (pptCapabilityActive) {
-        await injectPptMaterialMcpServer(sdk, mcpServers, { agentCwd }, disabledTools)
+        await injectPptDeliveryMcpServer(sdk, mcpServers, disabledTools)
       }
 
       // Claude 通过 in-process MCP 使用与 Pi 相同的受管浏览器 controller；Pi 在后续分支注册 customTools。

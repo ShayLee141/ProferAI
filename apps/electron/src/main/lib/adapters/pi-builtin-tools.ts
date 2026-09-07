@@ -21,7 +21,6 @@ import type {
   ProferPermissionMode,
   AgentImageGenerationCard,
   ProferEvent,
-  PptMaterialItem,
   AgentPresetCreateInput,
   AgentPresetUpdateInput,
   PresetReference,
@@ -96,7 +95,6 @@ import {
 import { browserController } from '../browser-controller'
 import { resolveBrowserProfileKey } from '../browser-profile-policy'
 import { readClipboardText, writeClipboardText } from '../clipboard-agent-tools'
-import { downloadPptMaterialToWorkspace, searchPptMaterials } from '../ppt-material-service'
 import { auditPptDelivery, planPptVisuals } from '../ppt-delivery-audit-service'
 import { sendAgentLocalImage } from '../agent-image-output-service'
 import { formatAgentImageOutputToolResult } from '../agent-image-output-tools'
@@ -785,51 +783,9 @@ function buildPiAgentPreviewTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolD
   ] as unknown as ToolDefinition[]
 }
 
-function buildPiPptMaterialTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefinition[] {
-  // PPT 素材工具同时受会话级意图 gate 和预设级 ppt-materials 硬门禁控制。
-  if (!ctx.pptCapabilityActive || !ctx.agentCwd) return []
+function buildPiPptDeliveryTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefinition[] {
+  if (!ctx.pptCapabilityActive) return []
   return [
-    sdk.defineTool({
-      name: 'search_open_materials',
-      label: '搜索 PPT 开放许可素材',
-      description: '搜索可用于 PPT 的开放许可真实图片。默认仅返回 Public Domain/CC0；需要时可加入 CC BY，并保留来源与许可信息。',
-      promptSnippet: 'SearchOpenMaterials: find openly licensed real images for the active PPT deck and preserve attribution.',
-      parameters: Type.Object({
-        query: Type.String({ minLength: 1, maxLength: 200 }),
-        includeAttribution: Type.Optional(Type.Boolean()),
-      }),
-      async execute(_toolCallId, params) {
-        const args = params as { query: string; includeAttribution?: boolean }
-        return jsonToolResult(await searchPptMaterials({ query: args.query, includeAttribution: args.includeAttribution }))
-      },
-    }),
-    sdk.defineTool({
-      name: 'download_open_material',
-      label: '下载 PPT 开放许可素材',
-      description: '将搜索返回的一项开放许可素材下载到当前 Agent 工作区 .context/ppt-materials/，返回本地路径、来源页和许可信息。',
-      promptSnippet: 'DownloadOpenMaterial: save a selected licensed PPT asset under .context/ppt-materials/ with attribution metadata.',
-      parameters: Type.Object({
-        material: Type.Object({
-          id: Type.String(),
-          source: Type.Literal('wikimedia'),
-          title: Type.String(),
-          thumbnailUrl: Type.String({ format: 'uri' }),
-          originalUrl: Type.String({ format: 'uri' }),
-          landingPageUrl: Type.String({ format: 'uri' }),
-          licenseCode: Type.String(),
-          licenseUrl: Type.Optional(Type.String({ format: 'uri' })),
-          creator: Type.Optional(Type.String()),
-          attribution: Type.Optional(Type.String()),
-          width: Type.Optional(Type.Number()),
-          height: Type.Optional(Type.Number()),
-          mediaType: Type.Optional(Type.String()),
-        }),
-      }),
-      async execute(_toolCallId, params) {
-        const { material } = params as { material: PptMaterialItem }
-        return jsonToolResult(await downloadPptMaterialToWorkspace({ material }, ctx.agentCwd!))
-      },
-    }),
     sdk.defineTool({
       name: 'plan_ppt_visuals',
       label: '规划 PPT 视觉',
@@ -1623,9 +1579,9 @@ export async function buildPiBuiltinTools(
 
   if (!isAgentPresetToolGroupDisabled(ctx.disabledToolGroups, 'ppt-materials')) {
     try {
-      tools.push(...buildPiPptMaterialTools(sdk, ctx))
+      tools.push(...buildPiPptDeliveryTools(sdk, ctx))
     } catch (error) {
-      console.error('[Pi 桥接] 注入 PPT 素材工具失败:', error)
+      console.error('[Pi 桥接] 注入 PPT 交付工具失败:', error)
     }
   }
 

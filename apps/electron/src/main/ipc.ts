@@ -15,13 +15,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, LARK_IPC_CHANNELS, AGENT_PRESET_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AUTH_IPC_CHANNELS, SYNC_IPC_CHANNELS, TEAM_IPC_CHANNELS, SKILL_MARKETPLACE_IPC_CHANNELS, SKILL_MASTER_IPC_CHANNELS, GLOBAL_SKILL_IPC_CHANNELS, TEAM_FILE_IPC_CHANNELS, TEAM_MEMORY_IPC_CHANNELS, isAgentRuntime, isProferPermissionMode, normalizePathForCompare, DEFAULT_PRESET_ID, type AgentThinkingLevel, PLANNING_CONFLICT_ERROR, type Todo, type TodoListQuery, type CalendarEvent, type CalendarEventListQuery, type CreateTodoInput, type UpdateTodoInput, type CreateCalendarEventInput, type UpdateCalendarEventInput, type StartTodoAgentInput, type StartTodoAgentResult, type CreatePlanningGroupInput, type UpdatePlanningGroupInput, type PlanningGroup, type PlanningGroupScope, type PlanningTag, type PlanningReminder, type ActivePlanningReminder, type SnoozePlanningReminderInput, type TodoAgentSessionActivation, type ProviderType, type ReasoningCapability, type AgentPreset, type AgentPresetCreateInput, type AgentPresetUpdateInput, type AgentPresetImportResult, type OtherWorkspacePresetsGroup, type PresetReference, type PresetReferenceReport, type PresetScopeRebindResult } from '@profer/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SKIN_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, NOTIFICATION_SOUND_IPC_CHANNELS, DESKTOP_NOTIFICATION_IPC_CHANNELS } from '../types'
 import type { CustomNotificationSound } from '../types'
-import {
-  PPT_MATERIAL_IPC_CHANNELS,
-  type PptMaterialDownloadInput,
-  type PptMaterialDownloadResult,
-  type PptMaterialSearchInput,
-  type PptMaterialSearchResult,
-} from '@profer/shared'
 import { getBuildTarget } from './lib/build-target'
 import { agentFilePreviewSessionManager } from './lib/agent-file-preview-session'
 import { resolvePiReasoningCapability } from './lib/adapters/pi-model-registry'
@@ -365,7 +358,6 @@ import {
 import { resolveMemoryWikilink, findMemoryBacklinks } from './lib/memory-wikilink-service'
 import { assertSafeSkillSegment } from './lib/skill-path-security'
 import { searchFileCandidate, type FileSearchResult as FileCandidateSearchResult } from './lib/file-search-service'
-import { downloadPptMaterial, searchPptMaterials } from './lib/ppt-material-service'
 import { createMemoryArchiveSearcher } from './lib/memory-archive-search'
 import { cancelLarkLogin, detectLarkCli, installLarkCli, startLarkLogin, __setLarkLoginEventHandler } from './lib/lark-cli-service'
 import { cancelLarkMcpLogin, disableLarkMcpForWorkspace, enableLarkMcpForWorkspace, getLarkMcpStatus, saveLarkMcpCredentials, startLarkMcpLogin, testLarkMcpConnection, __setLarkMcpLoginEventHandler } from './lib/lark-mcp-service'
@@ -1919,16 +1911,6 @@ export function registerIpcHandlers(): void {
     async (_, input: GenerateTitleInput): Promise<string | null> => {
       return generateTitle(input)
     }
-  )
-
-  // ===== 开放许可 PPT 素材 =====
-  ipcMain.handle(
-    PPT_MATERIAL_IPC_CHANNELS.SEARCH,
-    async (_, input: PptMaterialSearchInput): Promise<PptMaterialSearchResult> => searchPptMaterials(input),
-  )
-  ipcMain.handle(
-    PPT_MATERIAL_IPC_CHANNELS.DOWNLOAD,
-    async (_, input: PptMaterialDownloadInput): Promise<PptMaterialDownloadResult> => downloadPptMaterial(input),
   )
 
   // ===== 附件管理相关 =====
