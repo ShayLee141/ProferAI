@@ -4,7 +4,8 @@
  * 通过主进程唤起系统级豆包流式语音输入浮窗。
  */
 
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { MicIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -15,6 +16,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { AgentComposerToolTrigger } from '@/components/ai-elements/composer/ComposerTool'
+import {
+  voiceDictationEnabledAtom,
+  voiceDictationSettingsAtom,
+} from '@/atoms/voice-dictation-atoms'
 
 interface SpeechButtonProps {
   /** @deprecated 语音结果统一由全局语音输入回填到当前输入框 */
@@ -32,16 +37,26 @@ export function SpeechButton({
   className,
   composerTool = false,
   tabletMode = false,
-}: SpeechButtonProps): React.ReactElement {
+}: SpeechButtonProps): React.ReactElement | null {
+  const enabled = useAtomValue(voiceDictationEnabledAtom)
+  const setSettings = useSetAtom(voiceDictationSettingsAtom)
+
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.getVoiceDictationSettings()
+      .then((settings) => {
+        if (!cancelled) setSettings(settings)
+      })
+      .catch((error) => console.error('[语音输入] 加载设置失败:', error))
+
+    return () => {
+      cancelled = true
+    }
+  }, [setSettings])
+
   const handleClick = useCallback((): void => {
     void (async () => {
       try {
-        const settings = await window.electronAPI.getVoiceDictationSettings()
-        if (!settings.enabled) {
-          toast.info('请先在设置中打开语音输入开关')
-          return
-        }
-
         await window.electronAPI.toggleVoiceDictation()
       } catch (error) {
         console.error('[语音输入] 唤起浮窗失败:', error)
@@ -49,6 +64,8 @@ export function SpeechButton({
       }
     })()
   }, [])
+
+  if (!enabled) return null
 
   if (composerTool) {
     return (

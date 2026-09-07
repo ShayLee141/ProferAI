@@ -20,7 +20,6 @@ import {
   GraduationCap,
   X,
   Keyboard,
-  Mic,
   Users,
   Coins,
   CreditCard,
@@ -56,7 +55,6 @@ import { PromptSettings } from "./PromptSettings";
 import { ToolSettings } from "./ToolSettings";
 import { BotHubSettings } from "./BotHubSettings";
 import { ShortcutSettings } from "./ShortcutSettings";
-import { VoiceInputSettings } from "./VoiceInputSettings";
 import { DataManagementSettings } from "./DataManagementSettings";
 import { TeamWorkspaceSettings } from "./TeamWorkspaceSettings";
 import { CreditsSettings } from "./CreditsSettings";
@@ -96,10 +94,9 @@ const MODEL_GROUP_ITEMS: SettingsTabItem[] = [
   { id: "tools", label: "Chat 工具", icon: <Wrench size={16} /> },
 ];
 
-/** 体验：外观 / 语音 / 快捷键 / 教程 */
+/** 体验：外观 / 快捷键 / 教程 */
 const EXPERIENCE_GROUP_ITEMS: SettingsTabItem[] = [
   { id: "appearance", label: "外观设置", icon: <Palette size={16} /> },
-  { id: "voice-input", label: "语音输入", icon: <Mic size={16} /> },
   { id: "shortcuts", label: "快捷键管理", icon: <Keyboard size={16} /> },
   { id: "tutorial", label: "Profer 教程", icon: <GraduationCap size={16} /> },
 ];
@@ -151,8 +148,6 @@ function renderTabContent(tab: SettingsTab, tabletMode = false): React.ReactElem
       return <BotHubSettings />;
     case "shortcuts":
       return <ShortcutSettings />;
-    case "voice-input":
-      return <VoiceInputSettings />;
     case "data-management":
       return <DataManagementSettings />;
     case "team":
