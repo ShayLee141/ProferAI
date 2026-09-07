@@ -2253,15 +2253,14 @@ export function cleanupStaleAttachedPaths(): number {
   const index = readIndex()
   let count = 0
 
+  // 附加路径清理属于启动维护，不是用户对会话内容的更新。
+  // 保留 updatedAt，避免旧会话被批量顶到侧栏最前并显示成“刚刚”。
   for (const session of index.sessions) {
-    let changed = false
-
     if (session.attachedDirectories?.length) {
       const valid = session.attachedDirectories.filter((d) => existsSync(d))
       if (valid.length < session.attachedDirectories.length) {
         count += session.attachedDirectories.length - valid.length
         session.attachedDirectories = valid.length > 0 ? valid : undefined
-        changed = true
       }
     }
 
@@ -2270,12 +2269,7 @@ export function cleanupStaleAttachedPaths(): number {
       if (valid.length < session.attachedFiles.length) {
         count += session.attachedFiles.length - valid.length
         session.attachedFiles = valid.length > 0 ? valid : undefined
-        changed = true
       }
-    }
-
-    if (changed) {
-      session.updatedAt = Date.now()
     }
   }
 
