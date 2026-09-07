@@ -235,26 +235,33 @@ describe('buildSystemPrompt', () => {
     expect(commitPrompt).not.toContain('`mcp__agent-presets__preset_propose_update` 提议更新工作区预设')
   })
 
-  test('极简预设 suppressPromptSections 隐藏任务图指南、委派策略与记忆体系段落', () => {
+  test('极简预设关闭全部产品能力时，Prompt 只保留基础工具规则与预设切换出口', () => {
+    const disabledToolGroups = ['task-graph', 'memory', 'collaboration', 'automation', 'browser', 'clipboard', 'preview', 'image', 'web', 'ppt-materials'] as const
     const minimalPrompt = buildSystemPrompt({
       workspaceName: 'Demo',
       workspaceSlug: 'demo-workspace',
       sessionId: 'session-123',
       permissionMode: 'auto',
       presetName: '极简',
-      suppressSections: ['subagents', 'memory', 'task-graph'],
+      suppressSections: ['subagents', 'memory', 'task-graph', 'automation'],
+      disabledToolGroups,
       isPiRuntime: true,
     })
-    // 隐藏：任务图指南条目、委派策略、知识维护架构、Pi 文件记忆小节
+    // 隐藏：任务图、委派、记忆、规划及所有增强型产品能力说明。
     expect(minimalPrompt).not.toContain('proma_task_create')
     expect(minimalPrompt).not.toContain('## SubAgent 委派策略')
     expect(minimalPrompt).not.toContain('## Profer 知识维护架构')
     expect(minimalPrompt).not.toContain('### Pi Runtime 与文件记忆')
-    // 保留：工具指南标题与其余条目、预设岗位段落、角色定义
-    expect(minimalPrompt).toContain('## 工具使用指南')
+    expect(minimalPrompt).not.toContain('create_todo')
+    expect(minimalPrompt).not.toContain('## Profer 受管浏览器')
+    expect(minimalPrompt).not.toContain('`inspect_preview`')
+    expect(minimalPrompt).not.toContain('`generate_image`')
+    expect(minimalPrompt).not.toContain('`WebSearch`')
+    // 保留：基础工具规则、预设岗位段落与切回其它预设的唯一出口。
     expect(minimalPrompt).toContain('回复中的代码块必须标语言')
     expect(minimalPrompt).toContain('## Agent 预设（岗位）体系')
     expect(minimalPrompt).toContain('当前会话预设：**极简**')
+    expect(minimalPrompt).toContain('preset_list')
 
     const standardPrompt = buildSystemPrompt({
       workspaceName: 'Demo',
@@ -457,6 +464,28 @@ describe('buildSystemPrompt', () => {
     expect(allPreviewDisabled).not.toContain('文件内容与视觉预览')
   })
 
+  test('代码预设关闭非研发能力，但保留任务图、记忆、预览、网页检索与图片呈现', () => {
+    const prompt = buildSystemPrompt({
+      workspaceName: 'Demo',
+      workspaceSlug: 'demo-workspace',
+      sessionId: 'session-code',
+      permissionMode: 'auto',
+      presetName: '代码',
+      disabledToolGroups: ['automation', 'browser', 'clipboard', 'ppt-materials'],
+      disabledTools: ['generate_image'],
+      isPiRuntime: true,
+    })
+    expect(prompt).toContain('proma_task_create')
+    expect(prompt).toContain('## SubAgent 委派策略')
+    expect(prompt).toContain('## Profer 知识维护架构')
+    expect(prompt).toContain('`inspect_preview`')
+    expect(prompt).toContain('`WebSearch`')
+    expect(prompt).toContain('`send_local_image`')
+    expect(prompt).not.toContain('create_todo')
+    expect(prompt).not.toContain('## Profer 受管浏览器')
+    expect(prompt).not.toContain('`generate_image`')
+  })
+
   test('六类能力硬禁用时 Prompt 与动态浏览器上下文不暴露对应入口', () => {
     const disabled = ['browser', 'clipboard', 'preview', 'image', 'web', 'ppt-materials'] as const
     const prompt = buildSystemPrompt({
@@ -472,7 +501,7 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toContain('`WebSearch`')
     expect(prompt).toContain('当前预设已关闭的能力')
     expect(prompt).toContain('受管浏览器（browser）')
-    expect(prompt).toContain('PPT 素材（ppt-materials）')
+    expect(prompt).toContain('PPT 交付（ppt-materials）')
 
     const dynamic = buildDynamicContext({
       workspaceName: 'Demo',

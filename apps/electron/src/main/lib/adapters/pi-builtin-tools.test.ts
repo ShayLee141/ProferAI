@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 
 // memory-archive 使用 node:sqlite，Pi bridge 测试只验证注册契约，避免 Bun 测试运行器加载原生 Node 模块。
 mock.module('../memory-archive-search', () => ({
@@ -9,10 +9,12 @@ mock.module('../memory-archive-search', () => ({
 
 // 内置工具桥接经会话/工作区服务间接导入 Electron；Bun 单测需提供最小主进程 mock。
 let imageToolAvailable = false
+let webSearchToolAvailable = false
 let generatedImageResult: unknown = undefined
 
 mock.module('../chat-tool-config', () => ({
-  getToolState: () => ({ enabled: imageToolAvailable }), getToolCredentials: () => ({}),
+  getToolState: (toolId: string) => ({ enabled: toolId === 'web-search' ? webSearchToolAvailable : imageToolAvailable }),
+  getToolCredentials: (toolId: string) => toolId === 'web-search' && webSearchToolAvailable ? { apiKey: 'test-tavily-key' } : {},
   getGptImageCredentials: () => ({ mode: 'official', apiKey: '', baseUrl: '', model: '' }),
 }))
 mock.module('../auth-service', () => ({
@@ -266,8 +268,13 @@ describe('Pi Profer in-process tool bridges', () => {
 })
 
 describe('Pi builtin tools disabledToolGroups pruning (preset capability pruning)', () => {
+  beforeEach(() => {
+    webSearchToolAvailable = true
+  })
+
   afterEach(() => {
     imageToolAvailable = false
+    webSearchToolAvailable = false
     generatedImageResult = undefined
   })
   /** 工具组 → 工具名前缀映射（与 buildPiBuiltinTools 中的注册前缀一致） */
@@ -355,7 +362,6 @@ describe('Pi builtin tools disabledToolGroups pruning (preset capability pruning
     const names = tools.map((tool) => tool.name)
     expect(names).not.toContain('plan_ppt_visuals')
     expect(names).not.toContain('audit_ppt_delivery')
-    expect(names).not.toContain('search_open_materials')
   })
 
   test('Given PPT capability active Then PPT-specific tools are registered', async () => {
@@ -367,7 +373,7 @@ describe('Pi builtin tools disabledToolGroups pruning (preset capability pruning
       pptCapabilityActive: true,
     })
     const names = tools.map((tool) => tool.name)
-    for (const expected of ['plan_ppt_visuals', 'audit_ppt_delivery', 'search_open_materials', 'download_open_material']) {
+    for (const expected of ['plan_ppt_visuals', 'audit_ppt_delivery']) {
       expect(names).toContain(expected)
     }
     for (const forbidden of ['inspect_deck_sources', 'create_deck_project', 'confirm_deck_brief', 'compile_deck_project']) {
@@ -386,7 +392,6 @@ describe('Pi builtin tools disabledToolGroups pruning (preset capability pruning
     })
     expect(tools.some((tool) => tool.name === 'plan_ppt_visuals')).toBe(false)
     expect(tools.some((tool) => tool.name === 'audit_ppt_delivery')).toBe(false)
-    expect(tools.some((tool) => tool.name === 'search_open_materials')).toBe(false)
   })
 
   test('Given no disabled groups Then all four groups are registered', async () => {
@@ -443,6 +448,74 @@ describe('Pi builtin tools disabledToolGroups pruning (preset capability pruning
     }
     // 预设工具永不裁剪：极简会话必须能切回其他预设
     expect(tools.some((t) => t.name.startsWith('mcp__agent-presets__'))).toBe(true)
+  })
+
+  test('Given code-mode non-development groups disabled When building Pi tools Then research and image presentation remain available', async () => {
+    const { sdk, tools } = createPiSdkStub()
+    await buildPiBuiltinTools(sdk, {
+      ...baseCtx,
+      agentCwd: 'C:/safe/session',
+      allowedRoots: ['C:/safe/attached'],
+      pptCapabilityActive: true,
+      disabledToolGroups: ['automation', 'browser', 'clipboard', 'ppt-materials'],
+      disabledTools: ['generate_image'],
+    })
+    const names = new Set(tools.map((tool) => tool.name))
+    for (const forbidden of [
+      'mcp__automation__create_automation',
+      'mcp__planning__create_todo',
+      'BrowserObserve',
+      'clipboard_read_text',
+      'generate_image',
+      'plan_ppt_visuals',
+    ]) {
+      expect(names.has(forbidden), `${forbidden} should be pruned in code mode`).toBe(false)
+    }
+    for (const engineeringTool of [
+      'mcp__task-graph__proma_task_create',
+      'mcp__memory-archive__search_memory',
+      'mcp__collaboration__delegate_agent',
+      'inspect_preview',
+      'WebSearch',
+      'WebFetch',
+      'send_local_image',
+    ]) {
+      expect(names.has(engineeringTool), `${engineeringTool} should remain in code mode`).toBe(true)
+    }
+  })
+
+  test('Given all ten product groups disabled When building Pi builtin tools Then only core and preset tools remain', async () => {
+    const { sdk, tools } = createPiSdkStub()
+    await buildPiBuiltinTools(sdk, {
+      ...baseCtx,
+      agentCwd: 'C:/safe/session',
+      allowedRoots: ['C:/safe/attached'],
+      pptCapabilityActive: true,
+      disabledToolGroups: ['task-graph', 'memory', 'collaboration', 'automation', 'browser', 'clipboard', 'preview', 'image', 'web', 'ppt-materials'],
+    })
+    const names = new Set(tools.map((tool) => tool.name))
+    for (const forbidden of [
+      'mcp__task-graph__proma_task_create',
+      'mcp__memory-archive__search_memory',
+      'mcp__collaboration__delegate_agent',
+      'mcp__automation__create_automation',
+      'mcp__planning__create_todo',
+      'BrowserObserve',
+      'clipboard_read_text',
+      'inspect_preview',
+      'open_file_preview',
+      'inspect_file_preview',
+      'send_local_image',
+      'generate_image',
+      'WebSearch',
+      'WebFetch',
+      'plan_ppt_visuals',
+      'audit_ppt_delivery',
+    ]) {
+      expect(names.has(forbidden), `${forbidden} should be pruned in minimal mode`).toBe(false)
+    }
+    // 预设工具不属于普通裁剪组：用户必须能够切换到其它预设。
+    expect(names.has('mcp__agent-presets__preset_list')).toBe(true)
   })
 
   test('Given disabledTools 单工具短名 When building Pi builtin tools Then 只过滤列出的工具且同组其余工具保留', async () => {

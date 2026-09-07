@@ -97,12 +97,12 @@ describe('Capability Registry', () => {
 })
 
 describe('listAgentPresets', () => {
-  test('极简内置预设声明禁用产品工具组与 suppress 段落（提示词与工具一致）', () => {
+  test('极简内置预设关闭全部产品能力组，并同步 suppress 可映射的内置段落', () => {
     const presets = listAgentPresets(WS_A)
     const minimal = presets.find((p) => p.id === 'minimal')
     expect(minimal).toBeDefined()
-    expect(minimal!.disabledToolGroups).toEqual(['task-graph', 'memory', 'collaboration'])
-    expect(minimal!.suppressPromptSections).toEqual(['subagents', 'memory', 'task-graph'])
+    expect(minimal!.disabledToolGroups).toEqual([...AGENT_PRESET_TOOL_GROUPS])
+    expect(minimal!.suppressPromptSections).toEqual(['subagents', 'memory', 'task-graph', 'automation'])
   })
 
   test('无配置时返回三个内置预设', () => {
@@ -121,8 +121,20 @@ describe('listAgentPresets', () => {
     }
     const standard = presets.find((p) => p.id === BUILTIN_PRESET_STANDARD)!
     expect(standard.promptSections).toBeUndefined()
+    expect(standard.description).toContain('默认工作模式')
+    const code = presets.find((p) => p.id === BUILTIN_PRESET_CODE)!
+    expect(code.description).toContain('严格研发模式')
+    expect(code.effort).toBe('high')
+    expect(code.disabledToolGroups).toEqual(['automation', 'browser', 'clipboard', 'ppt-materials'])
+    expect(code.disabledTools).toEqual(['generate_image'])
+    expect(code.skillSlugs).toBeUndefined()
+    expect(code.mcpServerNames).toBeUndefined()
+    expect(code.promptSections?.[0]).toContain('跨边界修改必须检查调用方和契约')
+    expect(code.promptSections?.[0]).toContain('网页搜索/抓取与本地图片呈现保留')
     const minimal = presets.find((p) => p.id === BUILTIN_PRESET_MINIMAL)!
     expect(minimal.promptSections?.length).toBeGreaterThan(0)
+    expect(minimal.description).toContain('关闭全部产品能力组')
+    expect(minimal.promptSections?.[0]).toContain('全部产品能力组已为本会话关闭')
   })
 
   test('无工作区时仅返回内置三预设', () => {
@@ -186,11 +198,16 @@ describe('全局预设与作用域引用', () => {
     })
   })
 
-  test('解除内置基座范围前阻止仍继承该基座的工作区预设变成悬空引用', () => {
+  test('关闭元预设的直接选择入口后，基于它的工作区岗位仍可独立选择和解析', () => {
     const derived = createAgentPreset(WS_A, { name: '代码派生岗位', description: '', basePresetId: BUILTIN_PRESET_CODE })
-    expect(() => disableGlobalPresetInWorkspace(WS_A, { presetId: BUILTIN_PRESET_CODE, presetScope: 'builtin-meta' }))
-      .toThrow(`个工作区预设仍继承它`)
+    disableGlobalPresetInWorkspace(WS_A, { presetId: BUILTIN_PRESET_CODE, presetScope: 'builtin-meta' })
+
+    const presets = listAgentPresets(WS_A)
+    expect(presets.find((preset) => preset.id === BUILTIN_PRESET_CODE)?.enabledInWorkspace).toBe(false)
+    expect(presets.find((preset) => preset.id === derived.id)?.enabledInWorkspace).toBe(true)
     expect(getAgentPreset(WS_A, derived.id).id).toBe(derived.id)
+    expect(() => resolvePresetReference({ presetId: BUILTIN_PRESET_CODE, presetScope: 'builtin-meta' }, WS_A))
+      .toThrow('当前工作区')
   })
 
   test('禁用 standard 默认预设时自动改用 code，供加号新建会话继承', () => {
@@ -609,10 +626,10 @@ describe('自定义预设 CRUD', () => {
     expect(listAgentPresets(WS_A).some((p) => p.id === copy.id)).toBe(true)
   })
 
-  test('复制极简预设保留 suppressPromptSections 与 disabledToolGroups（三层一致）', () => {
+  test('复制极简预设保留全部能力组禁用与 suppressPromptSections（三层一致）', () => {
     const copy = copyAgentPreset(WS_A, BUILTIN_PRESET_MINIMAL, '极简副本')
-    expect(copy.suppressPromptSections).toEqual(['subagents', 'memory', 'task-graph'])
-    expect(copy.disabledToolGroups).toEqual(['task-graph', 'memory', 'collaboration'])
+    expect(copy.suppressPromptSections).toEqual(['subagents', 'memory', 'task-graph', 'automation'])
+    expect(copy.disabledToolGroups).toEqual([...AGENT_PRESET_TOOL_GROUPS])
   })
 
   test('创建自定义预设支持 suppressPromptSections 与 disabledToolGroups', () => {
@@ -930,7 +947,7 @@ describe('派生预设（basePresetId）', () => {
     })
     const resolved = getAgentPreset(WS_A, created.id)
     expect(resolved.suppressPromptSections).toEqual(['subagents', 'memory', 'task-graph', 'automation'])
-    expect(resolved.disabledToolGroups).toEqual(['task-graph', 'memory', 'collaboration', 'automation'])
+    expect(resolved.disabledToolGroups).toEqual([...AGENT_PRESET_TOOL_GROUPS])
   })
 
   test('mergeAgentPreset 纯函数：标量字段子预设定义则覆盖、未定义继承基座', async () => {
@@ -974,7 +991,7 @@ describe('派生预设（basePresetId）', () => {
     updateAgentPreset(WS_A, created.id, { basePresetId: BUILTIN_PRESET_MINIMAL })
     const resolved = getAgentPreset(WS_A, created.id)
     expect(resolved.promptSections?.[0]).toContain('极简模式')
-    expect(resolved.suppressPromptSections).toEqual(['subagents', 'memory', 'task-graph'])
+    expect(resolved.suppressPromptSections).toEqual(['subagents', 'memory', 'task-graph', 'automation'])
   })
 
   test('Given 脱离基座 When update basePresetId=null Then 冻结当前生效配置且不再跟随内置', () => {
@@ -1007,6 +1024,64 @@ describe('派生预设（basePresetId）', () => {
     const resolved = getAgentPreset(WS_A, copy.id)
     expect(resolved.promptSections).toHaveLength(2)
     expect(resolved.promptSections![0]).toContain('代码任务模式')
+  })
+
+  test('旧版本的元预设引用仍能解析，并跟随当前元预设定义', () => {
+    expect(() => resolvePresetReference({
+      presetId: BUILTIN_PRESET_CODE,
+      presetScope: 'builtin-meta',
+      presetVersion: '1.0.0',
+    }, WS_A)).not.toThrow()
+    expect(resolvePresetReference({
+      presetId: BUILTIN_PRESET_CODE,
+      presetScope: 'builtin-meta',
+      presetVersion: '1.0.0',
+    }, WS_A).version).toBe('1.4.0')
+  })
+
+  test('基于代码元预设的岗位会跟随基座 Prompt 变化，但保留自己的描述和追加段', () => {
+    const created = createAgentPreset(WS_A, {
+      name: '代码派生岗位',
+      description: '我的专用代码流程',
+      basePresetId: BUILTIN_PRESET_CODE,
+      promptSections: ['## 子岗位要求'],
+    })
+    const code = BUILTIN_AGENT_PRESETS.find((preset) => preset.id === BUILTIN_PRESET_CODE)!
+    const originalSections = code.promptSections
+    try {
+      code.promptSections = [...(originalSections ?? []), '## 元预设后续补充']
+      const resolved = getAgentPreset(WS_A, created.id)
+      expect(resolved.description).toBe('我的专用代码流程')
+      expect(resolved.promptSections).toEqual([
+        ...(originalSections ?? []),
+        '## 元预设后续补充',
+        '## 子岗位要求',
+      ])
+    } finally {
+      code.promptSections = originalSections
+    }
+  })
+
+  test('脱离基座后冻结当前状态，后续元预设变化不会改写工作区岗位', () => {
+    const created = createAgentPreset(WS_A, {
+      name: '冻结代码岗位',
+      description: '',
+      basePresetId: BUILTIN_PRESET_CODE,
+      promptSections: ['## 冻结时的要求'],
+    })
+    const beforeDetach = getAgentPreset(WS_A, created.id)
+    updateAgentPreset(WS_A, created.id, { basePresetId: null })
+
+    const code = BUILTIN_AGENT_PRESETS.find((preset) => preset.id === BUILTIN_PRESET_CODE)!
+    const originalSections = code.promptSections
+    try {
+      code.promptSections = [...(originalSections ?? []), '## 元预设新版本要求']
+      const resolved = getAgentPreset(WS_A, created.id)
+      expect(resolved.promptSections).toEqual(beforeDetach.promptSections)
+      expect(listAgentPresets(WS_A).find((preset) => preset.id === created.id)?.basePresetId).toBeUndefined()
+    } finally {
+      code.promptSections = originalSections
+    }
   })
 
   test('Given 手工写入非法 basePresetId 的配置 When 读取 Then 保留原始基座并标记 invalid-base', () => {
@@ -1081,8 +1156,8 @@ describe('单工具裁剪（disabledTools）', () => {
       basePresetId: BUILTIN_PRESET_CODE,
       disabledTools: ['delegate_agent', 'run_automation_now'],
     })
-    // 基座 code 无 disabledTools；子预设两项直接生效
-    expect(getAgentPreset(WS_A, created.id).disabledTools).toEqual(['delegate_agent', 'run_automation_now'])
+    // 基座 code 关闭 AI 生图；子预设的单工具禁用在其基础上做并集。
+    expect(getAgentPreset(WS_A, created.id).disabledTools).toEqual(['generate_image', 'delegate_agent', 'run_automation_now'])
   })
 
   test('Given 更新清空 When disabledTools=null Then 恢复完整工具集', () => {

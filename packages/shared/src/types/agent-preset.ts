@@ -257,12 +257,10 @@ export const AGENT_PRESET_CAPABILITY_GROUPS = [
     ],
   }),
   capabilityGroup({
-    id: 'ppt-materials', label: 'PPT 素材', hint: '开放许可素材、视觉计划与交付审计',
+    id: 'ppt-materials', label: 'PPT 交付', hint: '视觉计划与交付审计',
     tools: [
-      capabilityTool('search_open_materials', '搜索开放素材', '搜索开放许可素材', 'external'),
-      capabilityTool('download_open_material', '下载开放素材', '下载开放许可素材到授权目录', 'external'),
-      capabilityTool('plan_ppt_visuals', '规划 PPT 视觉素材', '为 PPT 生成视觉素材规划', 'write'),
-      capabilityTool('audit_ppt_delivery', '审计 PPT 交付', '检查 PPT 素材交付结果'),
+      capabilityTool('plan_ppt_visuals', '规划 PPT 视觉', '为 PPT 生成视觉规划', 'write'),
+      capabilityTool('audit_ppt_delivery', '审计 PPT 交付', '检查 PPT 交付结果'),
     ],
   }),
 ] as const satisfies readonly AgentPresetCapabilityGroup[];
@@ -441,21 +439,24 @@ const CODE_PROMPT_SECTIONS: string[] = [
 
 当前会话使用「代码」预设。执行代码相关任务时：
 
-- 修改前先读取相关实现、现有约定和必要的工作树状态，做最小改动
-- 修改后必须执行最小相关验证（typecheck / 测试 / 重新读取确认），如实报告实际结果，绝不虚构"已验证通过"
-- 优先沿用仓库既有模式与工具，不引入新依赖
-- 完成前自检：错误处理、边界情况、类型安全、对既有行为的回归影响`,
+- 修改前先读取相关实现、现有约定和必要的工作树状态，做最小改动；保留与当前任务无关的既有未提交修改
+- 先明确 Renderer/UI、Electron main/preload/IPC、共享类型、运行时与测试的责任边界；跨边界修改必须检查调用方和契约
+- 修改后按改动层级执行相称验证（单测 / typecheck / build / 最小运行流程），如实区分实际验证范围，绝不虚构"已验证通过"
+- 优先沿用仓库既有模式与工具，不引入新依赖；复杂任务先拆清边界和依赖，避免把无关重构混入当前改动
+- 完成前自检：错误处理、边界情况、类型安全、对既有行为的回归影响；无法完成的验证必须说明原因和风险
+- 自动化、受管浏览器、剪贴板与 PPT 交付等非研发产品能力已关闭；网页搜索/抓取与本地图片呈现保留给研发检索和交付，AI 生图仍关闭
+- 详细的编码审查与安全规范由 code-honor 等 Skill 提供，本预设只定义严格工程任务的稳定工作姿态`
 ];
 
 /** 极简预设提示词段 */
 const MINIMAL_PROMPT_SECTIONS: string[] = [
   `## 极简模式
 
-当前会话使用「极简」预设：任务图、长期记忆、子 Agent 委派等重型能力已为本会话精简关闭，追求最小动作与最快响应：
+当前会话使用「极简」预设：全部产品能力组已为本会话关闭，只保留基础文件、命令与必要交互工具，追求本地任务的低干扰快速完成：
 
 - 直接完成用户请求，不做冗长的过程汇报
-- 只有用户明确要求时才写文件或记忆
-- 用最短路径给出结果`,
+- 记忆只在用户明确要求，或确认具有长期复用价值时写入；文件仍按用户任务需要正常创建或修改，并遵守权限与验证规则
+- 用最短的可验证路径给出结果`,
 ];
 
 /** 内置预设表 */
@@ -464,21 +465,24 @@ export const BUILTIN_AGENT_PRESETS: AgentPreset[] = [
     id: BUILTIN_PRESET_STANDARD,
     name: "标准",
     description:
-      "完整能力：任务图、子 Agent、记忆维护、知识沉淀，适合日常复杂任务",
+      "默认工作模式：保留当前运行时可用的完整能力，适合复杂研发、调研、文档和跨模块任务",
     isBuiltin: true,
     scope: "builtin-meta",
-    version: "1.0.0",
+    version: "1.1.0",
     createdAt: 0,
     updatedAt: 0,
   },
   {
     id: BUILTIN_PRESET_CODE,
     name: "代码",
-    description: "面向代码任务的验证闭环：最小改动、必验结果、尊重既有约定",
+    description: "严格研发模式：保留工程协作、文件预览、网页检索与图片呈现，关闭自动化等非研发能力",
     isBuiltin: true,
     scope: "builtin-meta",
-    version: "1.0.0",
+    version: "1.4.0",
+    effort: "high",
     promptSections: CODE_PROMPT_SECTIONS,
+    disabledToolGroups: ["automation", "browser", "clipboard", "ppt-materials"],
+    disabledTools: ["generate_image"],
     createdAt: 0,
     updatedAt: 0,
   },
@@ -486,13 +490,13 @@ export const BUILTIN_AGENT_PRESETS: AgentPreset[] = [
     id: BUILTIN_PRESET_MINIMAL,
     name: "极简",
     description:
-      "最小动作：不建任务图、不写记忆、不委派，适合快速问答和简单修改",
+      "本地快速完成模式：关闭全部产品能力组，只保留基础文件、命令与必要交互工具",
     isBuiltin: true,
     scope: "builtin-meta",
-    version: "1.0.0",
+    version: "1.2.0",
     promptSections: MINIMAL_PROMPT_SECTIONS,
-    suppressPromptSections: ["subagents", "memory", "task-graph"],
-    disabledToolGroups: ["task-graph", "memory", "collaboration"],
+    suppressPromptSections: ["subagents", "memory", "task-graph", "automation"],
+    disabledToolGroups: [...AGENT_PRESET_TOOL_GROUPS],
     createdAt: 0,
     updatedAt: 0,
   },

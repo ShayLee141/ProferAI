@@ -319,10 +319,15 @@ export function normalizePresetReference(reference: PresetReference, contextWork
 
 /** 严格解析同一引用；Claude 与 Pi runtime 均应调用此入口。 */
 export function resolvePresetReference(reference: PresetReference, contextWorkspaceSlug?: string): AgentPreset {
-  return resolvePresetReferenceInternal(reference, contextWorkspaceSlug, new Set<string>())
+  return resolvePresetReferenceInternal(reference, contextWorkspaceSlug, new Set<string>(), true)
 }
 
-function resolvePresetReferenceInternal(reference: PresetReference, contextWorkspaceSlug: string | undefined, visiting: Set<string>): AgentPreset {
+function resolvePresetReferenceInternal(
+  reference: PresetReference,
+  contextWorkspaceSlug: string | undefined,
+  visiting: Set<string>,
+  enforceWorkspaceAvailability: boolean,
+): AgentPreset {
   const normalized = normalizePresetReference(reference, contextWorkspaceSlug)
   const identity = `${normalized.presetScope}:${normalized.workspaceSlug ?? ''}:${normalized.presetId}`
   if (visiting.has(identity)) {
@@ -330,7 +335,7 @@ function resolvePresetReferenceInternal(reference: PresetReference, contextWorks
   }
   const nextVisiting = new Set(visiting)
   nextVisiting.add(identity)
-  if ((normalized.presetScope === 'user-global' || normalized.presetScope === 'builtin-meta') && contextWorkspaceSlug) {
+  if (enforceWorkspaceAvailability && (normalized.presetScope === 'user-global' || normalized.presetScope === 'builtin-meta') && contextWorkspaceSlug) {
     const globalConfig = readGlobalConfig()
     const scopes = globalConfig.workspaceScopes?.[normalized.presetId]
     if (scopes && !scopes.includes(contextWorkspaceSlug)) {
@@ -350,14 +355,18 @@ function resolvePresetReferenceInternal(reference: PresetReference, contextWorks
   if (raw.migrationStatus === 'invalid-base') {
     throw new AgentPresetError('PRESET_INVALID_BASE', raw.migrationReason ?? `预设基座无效: ${normalized.presetId}`, { presetId: normalized.presetId })
   }
-  if (normalized.presetVersion && raw.version && normalized.presetVersion !== raw.version) {
+  // builtin-meta 是随 Profer 发布演进的元预设：旧会话/派生引用中的版本只用于审计，
+  // 不能阻断它们跟随新的元预设定义。用户全局/工作区预设仍执行严格版本校验。
+  if (normalized.presetScope !== 'builtin-meta' && normalized.presetVersion && raw.version && normalized.presetVersion !== raw.version) {
     throw new AgentPresetError('PRESET_CONCURRENT_UPDATE', `预设版本已变化: ${normalized.presetId}`)
   }
   const baseReference = raw.basePresetReference ?? (raw.basePresetId
     ? { presetId: raw.basePresetId, presetScope: 'builtin-meta' as const }
     : undefined)
   if (!baseReference) return withSuppressMapping(raw)
-  const base = resolvePresetReferenceInternal(baseReference, normalized.workspaceSlug, nextVisiting)
+  // 基座是定义依赖，不是可选预设。即使元/全局基座在当前工作区的选择器中停用，
+  // 已启用的工作区派生预设仍应能解析和使用；只有顶层选择才检查工作区生效范围。
+  const base = resolvePresetReferenceInternal(baseReference, normalized.workspaceSlug, nextVisiting, false)
   return withSuppressMapping(mergeAgentPreset(base, raw))
 }
 
@@ -899,41 +908,10 @@ export function enableGlobalPresetInWorkspace(workspaceSlug: string, reference: 
   }
 }
 
-function findWorkspacePresetDependents(workspaceSlug: string, source: PresetReference): string[] {
-  const presets = readConfig(workspaceSlug).presets
-  const byId = new Map(presets.map((preset) => [preset.id, preset]))
-  const dependents: string[] = []
-
-  const dependsOn = (preset: AgentPreset, trail: Set<string>): boolean => {
-    const base = preset.basePresetReference ?? (preset.basePresetId
-      ? { presetId: preset.basePresetId, presetScope: 'builtin-meta' as const }
-      : undefined)
-    if (!base) return false
-    if (base.presetId === source.presetId && base.presetScope === source.presetScope) return true
-    if (base.presetScope !== 'workspace') return false
-    if (trail.has(preset.id)) return false
-    const parent = byId.get(base.presetId)
-    return parent ? dependsOn(parent, new Set([...trail, preset.id])) : false
-  }
-
-  for (const preset of presets) {
-    if (dependsOn(preset, new Set())) dependents.push(preset.id)
-  }
-  return dependents
-}
-
 export function disableGlobalPresetInWorkspace(workspaceSlug: string, reference: PresetReference): void {
   const normalized = normalizePresetReference(reference)
   if (normalized.presetScope !== 'user-global' && normalized.presetScope !== 'builtin-meta') throw new AgentPresetError('PRESET_READ_ONLY', '只有全局或元预设可以解除工作区范围')
   resolvePresetReference(normalized)
-  const dependentPresetIds = findWorkspacePresetDependents(workspaceSlug, normalized)
-  if (dependentPresetIds.length > 0) {
-    throw new AgentPresetError(
-      'PRESET_DELETE_BLOCKED',
-      `无法解除「${normalized.presetId}」在当前工作区的生效范围：${dependentPresetIds.length} 个工作区预设仍继承它，请先将这些预设脱离基座`,
-      { dependentPresetIds, workspaceSlug, source: normalized },
-    )
-  }
   const report = getPresetReferenceReport(normalized)
   const workspaceBlockers = report.blockers.filter((item) => item.workspaceSlug === workspaceSlug)
   // 工作区默认是单一值，可以在同一事务边界内清空；会话/自动任务则必须由调用方

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentPreset, AgentPresetUpdateInput } from '@profer/shared'
+import { AGENT_PRESET_TOOL_GROUPS, type AgentPreset, type AgentPresetUpdateInput } from '@profer/shared'
 import {
   __resetAgentPresetsBaseDirForTest,
   __setAgentPresetsBaseDirForTest,
@@ -199,7 +199,7 @@ describe('Agent preset creation operations', () => {
     expect(result.preset.name).toBe('快速问答')
     expect(result.preset.sourcePresetId).toBe('minimal')
     expect(result.preset.sourcePresetScope).toBe('builtin-meta')
-    expect(result.preset.disabledToolGroups).toEqual(['task-graph', 'memory', 'collaboration'])
+    expect(result.preset.disabledToolGroups).toEqual([...AGENT_PRESET_TOOL_GROUPS])
     expect(listAgentPresets('ws-a').some((preset) => preset.id === result.preset.id)).toBe(true)
   })
 
@@ -212,7 +212,7 @@ describe('Agent preset creation operations', () => {
       standard,
       { presetId: 'standard', presetScope: 'builtin-meta' },
     )
-    expect(elevated.enabledToolGroups).toEqual(['task-graph', 'memory', 'collaboration'])
+    expect(elevated.enabledToolGroups).toEqual([...AGENT_PRESET_TOOL_GROUPS])
     expect(elevated.elevatesCapabilities).toBe(true)
     expect(elevated.subagentsEnabled).toBe(true)
 
@@ -222,7 +222,7 @@ describe('Agent preset creation operations', () => {
       minimal,
       { presetId: 'minimal', presetScope: 'builtin-meta' },
     )
-    expect(restricted.disabledToolGroups).toEqual(['task-graph', 'memory', 'collaboration'])
+    expect(restricted.disabledToolGroups).toEqual([...AGENT_PRESET_TOOL_GROUPS])
     expect(restricted.enabledToolGroups).toEqual([])
     expect(restricted.elevatesCapabilities).toBe(false)
   })
