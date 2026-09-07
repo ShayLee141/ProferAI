@@ -186,6 +186,13 @@ describe('全局预设与作用域引用', () => {
     })
   })
 
+  test('解除内置基座范围前阻止仍继承该基座的工作区预设变成悬空引用', () => {
+    const derived = createAgentPreset(WS_A, { name: '代码派生岗位', description: '', basePresetId: BUILTIN_PRESET_CODE })
+    expect(() => disableGlobalPresetInWorkspace(WS_A, { presetId: BUILTIN_PRESET_CODE, presetScope: 'builtin-meta' }))
+      .toThrow(`个工作区预设仍继承它`)
+    expect(getAgentPreset(WS_A, derived.id).id).toBe(derived.id)
+  })
+
   test('禁用 standard 默认预设时自动改用 code，供加号新建会话继承', () => {
     disableGlobalPresetInWorkspace(WS_A, { presetId: BUILTIN_PRESET_STANDARD, presetScope: 'builtin-meta' })
     expect(getDefaultPresetId(WS_A)).toBe(BUILTIN_PRESET_CODE)

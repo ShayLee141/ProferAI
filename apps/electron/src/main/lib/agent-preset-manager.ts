@@ -899,10 +899,41 @@ export function enableGlobalPresetInWorkspace(workspaceSlug: string, reference: 
   }
 }
 
+function findWorkspacePresetDependents(workspaceSlug: string, source: PresetReference): string[] {
+  const presets = readConfig(workspaceSlug).presets
+  const byId = new Map(presets.map((preset) => [preset.id, preset]))
+  const dependents: string[] = []
+
+  const dependsOn = (preset: AgentPreset, trail: Set<string>): boolean => {
+    const base = preset.basePresetReference ?? (preset.basePresetId
+      ? { presetId: preset.basePresetId, presetScope: 'builtin-meta' as const }
+      : undefined)
+    if (!base) return false
+    if (base.presetId === source.presetId && base.presetScope === source.presetScope) return true
+    if (base.presetScope !== 'workspace') return false
+    if (trail.has(preset.id)) return false
+    const parent = byId.get(base.presetId)
+    return parent ? dependsOn(parent, new Set([...trail, preset.id])) : false
+  }
+
+  for (const preset of presets) {
+    if (dependsOn(preset, new Set())) dependents.push(preset.id)
+  }
+  return dependents
+}
+
 export function disableGlobalPresetInWorkspace(workspaceSlug: string, reference: PresetReference): void {
   const normalized = normalizePresetReference(reference)
   if (normalized.presetScope !== 'user-global' && normalized.presetScope !== 'builtin-meta') throw new AgentPresetError('PRESET_READ_ONLY', '只有全局或元预设可以解除工作区范围')
   resolvePresetReference(normalized)
+  const dependentPresetIds = findWorkspacePresetDependents(workspaceSlug, normalized)
+  if (dependentPresetIds.length > 0) {
+    throw new AgentPresetError(
+      'PRESET_DELETE_BLOCKED',
+      `无法解除「${normalized.presetId}」在当前工作区的生效范围：${dependentPresetIds.length} 个工作区预设仍继承它，请先将这些预设脱离基座`,
+      { dependentPresetIds, workspaceSlug, source: normalized },
+    )
+  }
   const report = getPresetReferenceReport(normalized)
   const workspaceBlockers = report.blockers.filter((item) => item.workspaceSlug === workspaceSlug)
   // 工作区默认是单一值，可以在同一事务边界内清空；会话/自动任务则必须由调用方
