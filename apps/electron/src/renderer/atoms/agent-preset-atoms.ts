@@ -3,8 +3,7 @@
  *
  * - agentPresetsAtom：Map<workspaceSlug, AgentPreset[]>，预设为工作区级配置，
  *   按需加载后缓存（技能视图/会话工具栏各自通过 workspacePresetsAtom 读写）。
- * - agentSessionPresetMapAtom：会话 ID → 预设 ID 的内存映射（乐观更新，重启后
- *   以 session meta.presetId 为准回读）。
+ * - 无工作区会话使用独立缓存键，仍可选择内置元预设。
  */
 
 import { atom } from 'jotai'
@@ -15,21 +14,24 @@ import { DEFAULT_PRESET_ID } from '@profer/shared'
 /** 按工作区缓存的预设列表（预设为工作区级配置） */
 export const agentPresetsAtom = atom<Map<string, AgentPreset[]>>(new Map())
 
-/** 会话 ID → 预设 ID 的内存映射（乐观更新） */
-export const agentSessionPresetMapAtom = atom<Map<string, string>>(new Map())
+const NO_WORKSPACE_PRESET_CACHE_KEY = '__no_workspace__'
 
-/** 某工作区的预设缓存读写原子；无工作区时返回内置兜底空列表（由 UI 兑底） */
-export const workspacePresetsAtom = atomFamily((workspaceSlug: string | undefined) =>
-  atom<AgentPreset[], [AgentPreset[]], void>(
-    (get) => (workspaceSlug ? get(agentPresetsAtom).get(workspaceSlug) ?? [] : []),
+export function agentPresetCacheKey(workspaceSlug: string | undefined): string {
+  return workspaceSlug ?? NO_WORKSPACE_PRESET_CACHE_KEY
+}
+
+/** 某工作区的预设缓存读写原子；无工作区会话也缓存并展示内置元预设。 */
+export const workspacePresetsAtom = atomFamily((workspaceSlug: string | undefined) => {
+  const cacheKey = agentPresetCacheKey(workspaceSlug)
+  return atom<AgentPreset[], [AgentPreset[]], void>(
+    (get) => get(agentPresetsAtom).get(cacheKey) ?? [],
     (get, set, presets: AgentPreset[]) => {
-      if (!workspaceSlug) return
       const next = new Map(get(agentPresetsAtom))
-      next.set(workspaceSlug, presets)
+      next.set(cacheKey, presets)
       set(agentPresetsAtom, next)
     },
-  ),
-)
+  )
+})
 
 /**
  * 在预设列表中解析预设。
@@ -40,15 +42,3 @@ export function presetOf(presets: AgentPreset[], presetId: string | undefined): 
   if (!presetId) return presets.find((p) => p.id === DEFAULT_PRESET_ID)
   return presets.find((p) => p.id === presetId) ?? presets.find((p) => p.id === DEFAULT_PRESET_ID)
 }
-
-export const sessionPresetIdAtom = atomFamily((sessionId: string) =>
-  atom<string | undefined, [string], void>(
-    (get) => get(agentSessionPresetMapAtom).get(sessionId),
-    (get, set, presetId: string) => {
-      const map = get(agentSessionPresetMapAtom)
-      const next = new Map(map)
-      next.set(sessionId, presetId)
-      set(agentSessionPresetMapAtom, next)
-    },
-  ),
-)

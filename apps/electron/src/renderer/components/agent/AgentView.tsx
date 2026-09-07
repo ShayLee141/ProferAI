@@ -28,7 +28,7 @@ import { PermissionBanner } from './PermissionBanner'
 import { RuntimeProcessPanel } from './RuntimeProcessPanel'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import { PresetSelector } from './PresetSelector'
-import { agentPresetsAtom } from '@/atoms/agent-preset-atoms'
+import { agentPresetCacheKey, agentPresetsAtom } from '@/atoms/agent-preset-atoms'
 import { AskUserBanner } from './AskUserBanner'
 import { ExitPlanModeBanner } from './ExitPlanModeBanner'
 import { PlanModeDashedBorder } from './PlanModeDashedBorder'
@@ -698,9 +698,8 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     const slug = workspaces.find((w) => w.id === currentWorkspaceId)?.slug
     void window.electronAPI.listAgentPresets(slug)
       .then((list) => setAgentPresets((prev) => {
-        if (!slug) return prev
         const next = new Map(prev)
-        next.set(slug, list)
+        next.set(agentPresetCacheKey(slug), list)
         return next
       }))
       .catch((error) => console.error('[Agent] 加载预设列表失败:', error))
@@ -968,10 +967,16 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
 
   // 获取工作区共享文件目录路径（@ 引用时需要搜索）
   const workspaceSlug = workspaces.find((w) => w.id === currentWorkspaceId)?.slug ?? null
-  // 预设有效性由工作区预设 API 返回；失效或未选择时发送前必须重新选择。
+  // 预设有效性由工作区预设 API 返回；优先按稳定作用域引用匹配，旧会话才回退裸 ID。
   const sessionPresetId = sessionMeta?.presetId
-  const workspacePresetList = workspaceSlug ? agentPresetsMap.get(workspaceSlug) ?? [] : []
-  const hasUsableSessionPreset = Boolean(sessionPresetId && workspacePresetList.some((preset) => preset.id === sessionPresetId && preset.enabledInWorkspace !== false))
+  const sessionPresetReference = sessionMeta?.presetReference
+  const workspacePresetList = agentPresetsMap.get(agentPresetCacheKey(workspaceSlug ?? undefined)) ?? []
+  const hasUsableSessionPreset = Boolean(sessionPresetId && workspacePresetList.some((preset) => {
+    if (preset.enabledInWorkspace === false || preset.id !== sessionPresetId) return false
+    if (!sessionPresetReference) return true
+    const scope = preset.scope ?? (preset.isBuiltin ? 'builtin-meta' : 'workspace')
+    return scope === sessionPresetReference.presetScope
+  }))
   const presetSelectionRequired = Boolean(sessionMeta && !hasUsableSessionPreset)
   const [presetMenuOpen, setPresetMenuOpen] = React.useState(false)
   const openWorkspacePresets = React.useCallback(() => {
@@ -2873,7 +2878,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
       ),
     },
     { key: 'permission-mode', node: <PermissionModeSelector sessionId={sessionId} composerTool tabletMode={tabletMode} /> },
-    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} workspaceSlug={sessionMeta?.workspaceId ? workspaces.find((w) => w.id === sessionMeta.workspaceId)?.slug : undefined} open={presetMenuOpen} onOpenChange={setPresetMenuOpen} onManagePresets={openWorkspacePresets} /> },
+    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} persistedPresetReference={sessionMeta?.presetReference} workspaceSlug={workspaceSlug ?? undefined} open={presetMenuOpen} onOpenChange={setPresetMenuOpen} onManagePresets={openWorkspacePresets} /> },
     {
       key: 'thinking',
       node: (
@@ -2967,6 +2972,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     handleCompact,
     tabletMode,
     presetMenuOpen,
+    workspaceSlug,
     openWorkspacePresets,
   ])
 
