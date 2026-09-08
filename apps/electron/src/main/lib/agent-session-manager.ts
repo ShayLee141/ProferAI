@@ -25,7 +25,7 @@ import {
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { assertEnabledModelForChannel } from './agent-model-selection'
 import { copyForkWorkspaceFiles } from './agent-fork-workspace-copy'
-import { normalizeSessionPresetId, presetReferenceForId } from './agent-preset-manager'
+import { listAgentPresets, normalizeSessionPresetId, presetReferenceForId } from './agent-preset-manager'
 import { copySettledPiHarnessEventsForFork } from './pi-harness/pi-harness-store'
 import { forkPiSessionArtifact } from './pi-session-fork'
 import { isEphemeralTransportError } from './error-patterns'
@@ -389,6 +389,10 @@ export function createAgentSession(
   // presetId 时，前者会回退为 standard，而后者会得到空引用，发送校验就会
   // 错误地报 AGENT_PRESET_REQUIRED。
   const normalizedPresetId = normalizeSessionPresetId(presetWorkspaceSlug, presetId)
+  // 未显式指定或默认值已被清除时，自动选择当前工作区首个仍启用的预设。
+  // 只有工作区确实没有任何可用预设时才保留空值，让 UI 展示配置提示。
+  const effectivePresetId = normalizedPresetId || listAgentPresets(presetWorkspaceSlug)
+    .find((preset) => preset.enabledInWorkspace !== false)?.id || ''
   const meta: AgentSessionMeta = {
     id: randomUUID(),
     title: title || '新 Agent 会话',
@@ -396,7 +400,7 @@ export function createAgentSession(
     modelId,
     workspaceId,
     agentRuntime: normalizeAgentRuntime(agentRuntime),
-    ...(normalizedPresetId ? { presetId: normalizedPresetId, presetReference: presetReferenceForId(presetWorkspaceSlug, normalizedPresetId) } : {}),
+    ...(effectivePresetId ? { presetId: effectivePresetId, presetReference: presetReferenceForId(presetWorkspaceSlug, effectivePresetId) } : {}),
     ...(draft ? { draft: true } : {}),
     createdAt: now,
     updatedAt: now,
@@ -2253,15 +2257,14 @@ export function cleanupStaleAttachedPaths(): number {
   const index = readIndex()
   let count = 0
 
+  // 附加路径清理属于启动维护，不是用户对会话内容的更新。
+  // 保留 updatedAt，避免旧会话被批量顶到侧栏最前并显示成“刚刚”。
   for (const session of index.sessions) {
-    let changed = false
-
     if (session.attachedDirectories?.length) {
       const valid = session.attachedDirectories.filter((d) => existsSync(d))
       if (valid.length < session.attachedDirectories.length) {
         count += session.attachedDirectories.length - valid.length
         session.attachedDirectories = valid.length > 0 ? valid : undefined
-        changed = true
       }
     }
 
@@ -2270,12 +2273,7 @@ export function cleanupStaleAttachedPaths(): number {
       if (valid.length < session.attachedFiles.length) {
         count += session.attachedFiles.length - valid.length
         session.attachedFiles = valid.length > 0 ? valid : undefined
-        changed = true
       }
-    }
-
-    if (changed) {
-      session.updatedAt = Date.now()
     }
   }
 

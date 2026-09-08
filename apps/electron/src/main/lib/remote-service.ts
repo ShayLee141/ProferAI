@@ -76,6 +76,11 @@ import {
   listConversations,
   createConversation,
   getConversationMessages,
+  getConversationBranch,
+  setActivePath,
+  getBranchTree,
+  forkBranchAt,
+  getMessageContent,
   getRecentMessages,
   updateConversationMeta,
   deleteConversation,
@@ -1522,7 +1527,55 @@ export async function handleRemoteCommand(
       const messageId = parsed.messageId as string
       if (!conversationId || !messageId) return { ok: false, error: '缺少 conversationId 或 messageId' }
       if (!listConversations(true).some((c) => c.id === conversationId)) return { ok: false, error: '对话不存在' }
+      console.warn('[远程] chat_truncate_messages_from 已废弃，建议改用 forkBranchAt + setActivePath')
       return { ok: true, data: truncateMessagesFrom(conversationId, messageId, parsed.preserveFirstMessageAttachments === true) }
+    }
+
+    case 'chat_get_branch': {
+      const conversationId = parsed.conversationId as string
+      if (!conversationId) return { ok: false, error: '缺少 conversationId' }
+      return { ok: true, data: getConversationBranch(conversationId) }
+    }
+
+    case 'chat_set_active_path': {
+      const conversationId = parsed.conversationId as string
+      const path = Array.isArray(parsed.path) ? parsed.path as string[] : null
+      if (!conversationId || !path) return { ok: false, error: '缺少 conversationId 或 path' }
+      try {
+        setActivePath(conversationId, path)
+        return { ok: true, data: getConversationBranch(conversationId) }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
+    case 'chat_get_branch_tree': {
+      const conversationId = parsed.conversationId as string
+      if (!conversationId) return { ok: false, error: '缺少 conversationId' }
+      return { ok: true, data: getBranchTree(conversationId) }
+    }
+
+    case 'chat_fork_branch_at': {
+      const conversationId = parsed.conversationId as string
+      const anchorId = parsed.anchorId as string
+      const payload = (parsed.payload ?? {}) as Parameters<typeof forkBranchAt>[2]
+      // PR #121 review by Copilot：必须用 typeof 判断 content，不能用 truthy——空字符串
+      // 是合法的"只更新附件/引用而内容为空"的编辑分叉场景，!payload?.content 会误判缺失。
+      if (!conversationId || !anchorId || !payload || typeof payload.content !== 'string') {
+        return { ok: false, error: '缺少 conversationId / anchorId / payload.content' }
+      }
+      try {
+        return { ok: true, data: forkBranchAt(conversationId, anchorId, payload) }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
+    case 'chat_get_message_content': {
+      const conversationId = parsed.conversationId as string
+      const messageId = parsed.messageId as string
+      if (!conversationId || !messageId) return { ok: false, error: '缺少 conversationId 或 messageId' }
+      return { ok: true, data: getMessageContent(conversationId, messageId) }
     }
 
     case 'chat_update_context_dividers': {

@@ -3059,3 +3059,21 @@ body.tablet-mode * {
     display: none;
   }
 }
+
+/* ===== 对话节点树悬停浮层入场动画 =====
+ * 用 @keyframes 而不是 transition，保证在 React 18 自动批处理 + portal 双阶段
+ * 挂载（先 mounted=true+visible=false，再 visible=true）下也能可靠触发淡入。
+ * translateX -4px → 0 是「面板从节点方向滑出」的微动效。 */
+@keyframes branch-tree-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.animate-branch-tree-panel-in {
+  animation: branch-tree-panel-in 150ms ease-out;
+}

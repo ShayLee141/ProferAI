@@ -20,6 +20,7 @@ import { AlertCircle, X, Wallet } from 'lucide-react'
 import { ChatHeader } from './ChatHeader'
 import { ChatMessages } from './ChatMessages'
 import { ChatInput } from './ChatInput'
+import { BranchTreeView } from './HistoryDrawer'
 import { AgentRecommendBanner } from './AgentRecommendBanner'
 import { PromptEditorSidebar } from './PromptEditorSidebar'
 import { KNOWLEDGE_PREVIEW_EVENT, KnowledgePreviewContent } from '@/components/knowledge-base/KnowledgePreviewPanel'
@@ -85,6 +86,8 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
   const [messagesLoaded, setMessagesLoaded] = React.useState(false)
   const [inlineEditingMessageId, setInlineEditingMessageId] = React.useState<string | null>(null)
   const [previewReference, setPreviewReference] = React.useState<import('@profer/shared').KnowledgeReference | null>(null)
+  const [historyDrawerOpen, setHistoryDrawerOpen] = React.useState(false)
+  const [branchTree, setBranchTree] = React.useState<import('@profer/shared').BranchTreeSnapshot | null>(null)
   React.useEffect(() => {
     const handlePreview = (event: Event) => setPreviewReference((event as CustomEvent<import('@profer/shared').KnowledgeReference>).detail)
     const handleEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewReference(null) }
@@ -179,10 +182,10 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
   React.useEffect(() => {
     setMessagesLoaded(false)
     window.electronAPI
-      .getRecentMessages(conversationId, INITIAL_MESSAGE_LIMIT)
-      .then((result) => {
-        setMessages(result.messages)
-        setHasMoreMessages(result.hasMore)
+      .getBranch(conversationId)
+      .then((msgs) => {
+        setMessages(msgs)
+        setHasMoreMessages(false)
         setMessagesLoaded(true)
 
         // 消息加载完成后，清除已完成的流式状态（streaming=false 的过渡气泡）
@@ -246,6 +249,8 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       consumePendingAttachments?: boolean
       messageCountBeforeSend?: number
       contextDividersOverride?: string[]
+      /** 重发 / 编辑后重发：该 user 节点已由 forkBranchAt 创建，sendMessage 不再追加重复消息 */
+      pendingUserMessageId?: string
     },
   ): Promise<void> => {
     if (!selectedModel) {
@@ -381,20 +386,25 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       thinkingEnabled: thinkingEnabled || undefined,
       systemMessage: resolveSystemMessage(conversationPromptId, promptConfig, userProfile.userName),
       enabledToolIds: activeToolIds.length > 0 ? activeToolIds : undefined,
+      ...(options?.pendingUserMessageId ? { pendingUserMessageId: options.pendingUserMessageId } : {}),
     }
 
-    // 乐观更新：立即在 UI 中显示用户消息
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `temp-${Date.now()}`,
-        role: 'user',
-        content,
-        createdAt: Date.now(),
-        attachments: savedAttachments.length > 0 ? savedAttachments : undefined,
-        knowledgeReferences: knowledgeReferences.length > 0 ? knowledgeReferences : undefined,
-      },
-    ])
+    // 优化更新：立即在 UI 中显示用户消息。
+    // 重发场景下 forkBranchAt 已经把新 user 节点写入并 refresh 到本地，这里不能再乐观插入一条重复的 temp 消息。
+    if (!options?.pendingUserMessageId) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `temp-${Date.now()}`,
+          parentId: prev.length > 0 ? prev[prev.length - 1]!.id : null,
+          role: 'user',
+          content,
+          createdAt: Date.now(),
+          attachments: savedAttachments.length > 0 ? savedAttachments : undefined,
+          knowledgeReferences: knowledgeReferences.length > 0 ? knowledgeReferences : undefined,
+        },
+      ])
+    }
 
     setPendingKnowledgeReferences([])
     window.electronAPI.sendMessage(input).catch((error) => {
@@ -447,36 +457,46 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
     })
   }, [chatPendingMessage, conversationId, selectedModel, isStreaming, handleSend])
 
-  /** 从某条消息起截断（包含该条） */
-  const truncateFromMessage = React.useCallback(async (
+  /** 在某条 user message 的兄弟位置 fork 一条新 user message（不删除任何旧节点） */
+  const forkFromMessage = React.useCallback(async (
     messageId: string,
-    preserveFirstMessageAttachments = false,
+    payload: { role: 'user'; content: string; attachments?: FileAttachment[]; knowledgeReferences?: ChatMessage['knowledgeReferences'] },
   ): Promise<{
     targetAttachments: FileAttachment[]
     messageCountBeforeSend: number
     contextDividersAfterTruncate: string[]
+    newUserMessage: ChatMessage
   }> => {
     const target = messages.find((msg) => msg.id === messageId)
     const targetIndex = messages.findIndex((msg) => msg.id === messageId)
     const targetAttachments = target?.attachments ?? []
-    const updatedMessages = await window.electronAPI.truncateMessagesFrom(
+
+    const newUserMessage = await window.electronAPI.forkBranchAt(
       conversationId,
       messageId,
-      preserveFirstMessageAttachments,
+      {
+        role: payload.role,
+        content: payload.content,
+        attachments: payload.attachments,
+        knowledgeReferences: payload.knowledgeReferences,
+      },
     )
-    setMessages(updatedMessages)
+
+    // 重新拉取激活分支（forkBranchAt 已更新 activePath 并把新节点追加到末尾）
+    const refreshed = await window.electronAPI.getBranch(conversationId)
+    setMessages(refreshed)
     setHasMoreMessages(false)
-    if (inlineEditingMessageId && inlineEditingMessageId !== messageId) {
-      const stillExists = updatedMessages.some((msg) => msg.id === inlineEditingMessageId)
-      if (!stillExists) {
-        setInlineEditingMessageId(null)
-      }
+
+    if (inlineEditingMessageId && inlineEditingMessageId !== messageId && !refreshed.some((m) => m.id === inlineEditingMessageId)) {
+      setInlineEditingMessageId(null)
     }
-    const contextDividersAfterTruncate = await syncContextDividers(conversationId, updatedMessages, contextDividers)
+
+    const contextDividersAfterTruncate = await syncContextDividers(conversationId, refreshed, contextDividers)
     return {
       targetAttachments,
-      messageCountBeforeSend: targetIndex >= 0 ? targetIndex : updatedMessages.length,
+      messageCountBeforeSend: targetIndex >= 0 ? targetIndex : refreshed.length,
       contextDividersAfterTruncate,
+      newUserMessage,
     }
   }, [
     conversationId,
@@ -509,6 +529,12 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
     return () => window.removeEventListener('profer:stop-generation', handler)
   }, [isStreaming, handleStop])
 
+  /** 重新拉取分支树（给 BranchTreeView 用） */
+  const reloadBranchTree = React.useCallback(async (): Promise<void> => {
+    const tree = await window.electronAPI.getBranchTree(conversationId)
+    setBranchTree(tree)
+  }, [conversationId])
+
   /** 删除消息 */
   const handleDeleteMessage = React.useCallback(async (messageId: string): Promise<void> => {
     try {
@@ -520,28 +546,37 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       if (inlineEditingMessageId === messageId) {
         setInlineEditingMessageId(null)
       }
+      // 删除可能改 activePath（截断/回退），刷新树状图让被删节点从树上消失
+      await reloadBranchTree()
       await syncContextDividers(conversationId, updatedMessages, contextDividers)
     } catch (error) {
       console.error('[ChatView] 删除消息失败:', error)
     }
-  }, [conversationId, contextDividers, inlineEditingMessageId, syncContextDividers])
+  }, [conversationId, contextDividers, inlineEditingMessageId, reloadBranchTree, syncContextDividers])
 
-  /** 重新发送：从该用户消息分叉后，直接重发 */
+  /** 重新发送：在该 user message 的兄弟位置 fork 一条新 user message 并触发重发 */
   const handleResendMessage = React.useCallback(async (message: { id: string; content: string }): Promise<void> => {
     if (isStreaming) return
 
     try {
-      const truncated = await truncateFromMessage(message.id, true)
+      const target = messages.find((m) => m.id === message.id)
+      const targetAttachments = target?.attachments ?? []
+      const forked = await forkFromMessage(message.id, {
+        role: 'user',
+        content: message.content,
+        attachments: targetAttachments,
+      })
       await handleSend(message.content, {
-        attachments: truncated.targetAttachments,
+        attachments: forked.targetAttachments,
         consumePendingAttachments: false,
-        messageCountBeforeSend: truncated.messageCountBeforeSend,
-        contextDividersOverride: truncated.contextDividersAfterTruncate,
+        messageCountBeforeSend: forked.messageCountBeforeSend,
+        contextDividersOverride: forked.contextDividersAfterTruncate,
+        pendingUserMessageId: forked.newUserMessage.id,
       })
     } catch (error) {
       console.error('[ChatView] 重新发送失败:', error)
     }
-  }, [isStreaming, truncateFromMessage, handleSend])
+  }, [isStreaming, forkFromMessage, handleSend, messages])
 
   /** 开始原地编辑 */
   const handleStartInlineEdit = React.useCallback((message: { id: string }): void => {
@@ -554,7 +589,7 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
     setInlineEditingMessageId(null)
   }, [])
 
-  /** 提交原地编辑并重发（删除该消息及其后续） */
+  /** 提交原地编辑：在该消息的兄弟位置 fork 一条新内容并触发重发 */
   const handleSubmitInlineEdit = React.useCallback(async (
     message: { id: string; content: string },
     payload: InlineEditSubmitPayload,
@@ -564,9 +599,12 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
     if (!trimmed && payload.keepExistingAttachments.length === 0 && payload.newAttachments.length === 0) return
 
     try {
-      const truncated = await truncateFromMessage(message.id, true)
+      const forked = await forkFromMessage(message.id, {
+        role: 'user',
+        content: trimmed,
+      })
       const keepLocalPathSet = new Set(payload.keepExistingAttachments.map((att) => att.localPath))
-      const removedOldAttachments = truncated.targetAttachments.filter(
+      const removedOldAttachments = forked.targetAttachments.filter(
         (att) => !keepLocalPathSet.has(att.localPath),
       )
       for (const removed of removedOldAttachments) {
@@ -588,14 +626,15 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       await handleSend(trimmed, {
         attachments: [...payload.keepExistingAttachments, ...newSavedAttachments],
         consumePendingAttachments: false,
-        messageCountBeforeSend: truncated.messageCountBeforeSend,
-        contextDividersOverride: truncated.contextDividersAfterTruncate,
+        messageCountBeforeSend: forked.messageCountBeforeSend,
+        contextDividersOverride: forked.contextDividersAfterTruncate,
+        pendingUserMessageId: forked.newUserMessage.id,
       })
       setInlineEditingMessageId(null)
     } catch (error) {
       console.error('[ChatView] 原地编辑重发失败:', error)
     }
-  }, [conversationId, isStreaming, truncateFromMessage, handleSend])
+  }, [conversationId, isStreaming, forkFromMessage, handleSend])
 
   /** 清除上下文（toggle 最后消息的分隔线） */
   const handleClearContext = React.useCallback((): void => {
@@ -628,10 +667,32 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       .catch(console.error)
   }, [conversationId, contextDividers])
 
+  /** 切换激活路径：把路径写到 main，重渲染 */
+  const handleSetActivePath = React.useCallback(async (path: string[]) => {
+    const updated = await window.electronAPI.setActivePath(conversationId, path)
+    setMessages(updated)
+    setHasMoreMessages(false)
+    return updated
+  }, [conversationId])
+
+  /** 切换激活分支（被 BranchTreeView 调用） */
+  const handleSetActivePathViaTree = React.useCallback(
+    async (path: string[]): Promise<void> => {
+      await handleSetActivePath(path)
+      await reloadBranchTree()
+    },
+    [handleSetActivePath, reloadBranchTree],
+  )
+
+  /** 加载整个分支树快照（用于树视图） */
+  const loadBranchTree = React.useCallback(async () => {
+    return window.electronAPI.getBranchTree(conversationId)
+  }, [conversationId])
+
   /** 加载全部历史消息（向上滚动时触发） */
   const handleLoadMore = React.useCallback(async (): Promise<void> => {
-    const allMessages = await window.electronAPI.getConversationMessages(conversationId)
-    setMessages(allMessages)
+    const branch = await window.electronAPI.getBranch(conversationId)
+    setMessages(branch)
     setHasMoreMessages(false)
   }, [conversationId])
 
@@ -640,7 +701,7 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       {/* 主内容区域 */}
       <div data-profer-navigation-region="conversation" tabIndex={-1} className="flex flex-col h-full flex-1 min-w-0">
         {/* Header 在 max-w 外，按钮可到达最右侧 */}
-        {!hideChatHeader && <ChatHeader conversation={conversation} />}
+        {!hideChatHeader && <ChatHeader conversation={conversation} onOpenHistory={() => setHistoryDrawerOpen(true)} />}
         <div className="flex flex-col flex-1 w-full max-w-[min(72rem,100%)] mx-auto overflow-hidden min-h-0">
           {/* 中间：消息区域 */}
           <ChatMessages
@@ -663,6 +724,7 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
             inlineEditingMessageId={inlineEditingMessageId}
             onDeleteDivider={handleDeleteDivider}
             onLoadMore={handleLoadMore}
+            onOpenHistory={() => setHistoryDrawerOpen(true)}
           />
 
           {/* 错误提示 */}
@@ -719,6 +781,17 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       </div>
 
       {previewReference ? <aside className="flex h-full min-w-[320px] max-w-[55%] flex-[0_1_42%] flex-col border-l border-surface-border bg-surface-raised"><header className="flex h-11 shrink-0 items-center border-b border-surface-border px-3"><span className="min-w-0 flex-1 truncate text-sm font-medium">{previewReference.title}</span><button type="button" aria-label="关闭资料预览" onClick={() => setPreviewReference(null)} className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><X className="size-4"/></button></header><KnowledgePreviewContent reference={previewReference}/></aside> : null}
+
+      {/* 分支树视图 */}
+      <BranchTreeView
+        open={historyDrawerOpen}
+        onOpenChange={setHistoryDrawerOpen}
+        conversationId={conversationId}
+        tree={branchTree}
+        onSwitchToPath={handleSetActivePathViaTree}
+        onReloadTree={reloadBranchTree}
+        onDeleteMessage={handleDeleteMessage}
+      />
 
       {/* 提示词编辑侧栏 */}
       <div className={cn(

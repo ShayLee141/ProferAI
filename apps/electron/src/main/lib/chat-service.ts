@@ -26,7 +26,7 @@ import {
 import type { ImageAttachmentData, ContinuationMessage } from '@profer/core'
 import { listChannels, decryptApiKey, isCommercialMode, canSelfConfig } from './channel-manager'
 import { getTeamAuthWithRefresh, recoverCommercialProxyAuth } from './auth-service'
-import { appendMessage, updateConversationMeta, getConversationMessages } from './conversation-manager'
+import { appendMessage, appendBranchTail, updateConversationMeta, getConversationBranch } from './conversation-manager'
 import { readAttachmentAsBase64, isImageAttachment } from './attachment-service'
 import { extractTextFromAttachment, isDocumentAttachment } from './document-parser'
 import { getFetchFn } from './proxy-fetch'
@@ -219,7 +219,7 @@ export async function sendMessage(
   const {
     conversationId, userMessage, channelId,
     modelId, systemMessage, contextLength, contextDividers, attachments,
-    thinkingEnabled, enabledToolIds, knowledgeReferences,
+    thinkingEnabled, enabledToolIds, knowledgeReferences, pendingUserMessageId,
   } = input
 
   // 1. 查找渠道
@@ -287,21 +287,28 @@ export async function sendMessage(
   }
 
   // 3. 先读取历史消息（在追加用户消息之前，避免 adapter 重复发送当前消息）
-  const fullHistory = getConversationMessages(conversationId)
+  //    关键：发送上下文只取当前 activePath 对应的线性消息流，绝不混入其他分支——否则
+  //    模型会看到「另一条分支的历史」（PR #121 review by Yuan-lai-ru-ci & Copilot）。
+  const fullHistory = getConversationBranch(conversationId)
 
-  // 4. 追加用户消息到 JSONL
-  const userMsg: ChatMessage = {
-    id: randomUUID(),
-    role: 'user',
-    content: userMessage,
-    createdAt: Date.now(),
-    attachments: attachments && attachments.length > 0 ? attachments : undefined,
-    knowledgeReferences: knowledgeReferences && knowledgeReferences.length > 0 ? knowledgeReferences : undefined,
+  // 4. 追加用户消息到 JSONL（用 appendBranchTail 自动按 activePath 接链 + 字段 parentId）
+  //    重发 / 编辑后重发：user 节点已由 forkBranchAt 创建，这里不能再追加，否则会多出一条重复的 user 消息。
+  if (!pendingUserMessageId) {
+    appendBranchTail(conversationId, {
+      role: 'user',
+      content: userMessage,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      knowledgeReferences: knowledgeReferences && knowledgeReferences.length > 0 ? knowledgeReferences : undefined,
+    })
   }
-  appendMessage(conversationId, userMsg)
 
   // 5. 过滤历史并提取文档附件文本
-  const filteredHistory = filterHistory(fullHistory, contextDividers, contextLength)
+  //    重发场景：历史里会包含刚 fork 出来的那条 user 节点（它代表当前的"这条问题"），
+  //    若不剔除，会出现"用户问了 1 次但模型看到 2 次同样内容"。这里把它从发送给模型的历史中剔除。
+  const historyExcludingPending = pendingUserMessageId
+    ? fullHistory.filter((m) => m.id !== pendingUserMessageId)
+    : fullHistory
+  const filteredHistory = filterHistory(historyExcludingPending, contextDividers, contextLength)
   const enrichedHistory = await enrichHistoryWithDocuments(filteredHistory)
   let enrichedUserMessage = await enrichMessageWithDocuments(userMessage, attachments)
   try {
@@ -502,17 +509,15 @@ export async function sendMessage(
     // 10. 保存 assistant 消息（空内容不保存，除非有生成的附件）
     const assistantMsgId = randomUUID()
     if (accumulatedContent.trim() || accumulatedGeneratedAttachments.length > 0) {
-      const assistantMsg: ChatMessage = {
+      appendBranchTail(conversationId, {
         id: assistantMsgId,
         role: 'assistant',
         content: accumulatedContent,
-        createdAt: Date.now(),
         model: modelId,
         reasoning: accumulatedReasoning || undefined,
         toolActivities: accumulatedToolActivities.length > 0 ? accumulatedToolActivities : undefined,
         attachments: accumulatedGeneratedAttachments.length > 0 ? accumulatedGeneratedAttachments : undefined,
-      }
-      appendMessage(conversationId, assistantMsg)
+      })
 
       // 更新对话索引的 updatedAt
       try {
@@ -537,17 +542,15 @@ export async function sendMessage(
       // 保存已累积的部分助手消息
       if (accumulatedContent) {
         const assistantMsgId = randomUUID()
-        const partialMsg: ChatMessage = {
+        appendBranchTail(conversationId, {
           id: assistantMsgId,
           role: 'assistant',
           content: accumulatedContent,
-          createdAt: Date.now(),
           model: modelId,
           reasoning: accumulatedReasoning || undefined,
           stopped: true,
           toolActivities: accumulatedToolActivities.length > 0 ? accumulatedToolActivities : undefined,
-        }
-        appendMessage(conversationId, partialMsg)
+        })
 
         try {
           updateConversationMeta(conversationId, {})
@@ -579,18 +582,16 @@ export async function sendMessage(
     // 保存已累积的部分助手消息（与 abort 逻辑一致，防止内容丢失）
     if (accumulatedContent) {
       const assistantMsgId = randomUUID()
-      const partialMsg: ChatMessage = {
+      appendBranchTail(conversationId, {
         id: assistantMsgId,
         role: 'assistant',
         content: accumulatedContent,
-        createdAt: Date.now(),
         model: modelId,
         reasoning: accumulatedReasoning || undefined,
         stopped: true,
         error: displayError,
         toolActivities: accumulatedToolActivities.length > 0 ? accumulatedToolActivities : undefined,
-      }
-      appendMessage(conversationId, partialMsg)
+      })
 
       try {
         updateConversationMeta(conversationId, {})

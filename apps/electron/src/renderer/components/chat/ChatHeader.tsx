@@ -6,7 +6,7 @@
 
 import * as React from 'react'
 import { useSetAtom } from 'jotai'
-import { Pencil, Check, X, Pin, Columns2 } from 'lucide-react'
+import { Pencil, Check, X, Pin, Columns2, GitBranch } from 'lucide-react'
 import { conversationsAtom } from '@/atoms/chat-atoms'
 import { useConversationParallelMode } from '@/hooks/useConversationSettings'
 import type { ConversationMeta } from '@profer/shared'
@@ -17,9 +17,11 @@ import { cn } from '@/lib/utils'
 
 interface ChatHeaderProps {
   conversation: ConversationMeta | null
+  /** 快捷打开分支树视图 */
+  onOpenHistory?: () => void
 }
 
-export function ChatHeader({ conversation }: ChatHeaderProps): React.ReactElement | null {
+export function ChatHeader({ conversation, onOpenHistory }: ChatHeaderProps): React.ReactElement | null {
   const setConversations = useSetAtom(conversationsAtom)
   const [parallelMode, setParallelMode] = useConversationParallelMode()
   const [editing, setEditing] = React.useState(false)
@@ -116,6 +118,22 @@ export function ChatHeader({ conversation }: ChatHeaderProps): React.ReactElemen
 
       {/* 右侧按钮组 */}
       <div className="flex items-center gap-1 titlebar-no-drag ml-auto">
+        {onOpenHistory && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onOpenHistory}
+              >
+                <GitBranch className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>对话节点树</p></TooltipContent>
+          </Tooltip>
+        )}
         <SystemPromptSelector />
         <Tooltip>
           <TooltipTrigger asChild>

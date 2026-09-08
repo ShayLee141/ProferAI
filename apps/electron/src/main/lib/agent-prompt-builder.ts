@@ -102,6 +102,14 @@ function buildToolUsageGuidelines(
     .join('\n')
 }
 
+function buildWebSearchGuideline(availableWebTools: ReadonlySet<string>): string {
+  const available = ['WebSearch', 'WebFetch'].filter((toolName) => availableWebTools.has(toolName))
+  if (available.length === 0) return ''
+  return `## Profer 网页检索
+
+- 公开资料检索优先使用 ${available.map((toolName) => `\`${toolName}\``).join('/')}；搜索用于时效信息、官方文档、报错与公开技术资料，抓取用于读取指定公开页面。`
+}
+
 function buildBrowserGuideline(
   availableBrowserTools: ReadonlySet<string>,
   availableWebTools: ReadonlySet<string>,
@@ -294,7 +302,7 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
 
   // 工具使用指南：任务图与规划中心分别跟随各自实际注册状态；规划中心归入 automation 组。
   sections.push(`## 工具使用指南
-${suppress.has('task-graph') ? '' : `${buildTaskGraphGuideline(ctx.isPiRuntime)}\n`}${suppress.has('automation') ? '' : `${buildPlanningTodoGuideline(ctx.isPiRuntime)}\n`}${buildToolUsageGuidelines(
+${suppress.has('task-graph') || capabilityDisabled('task-graph') ? '' : `${buildTaskGraphGuideline(ctx.isPiRuntime)}\n`}${suppress.has('automation') || capabilityDisabled('automation') ? '' : `${buildPlanningTodoGuideline(ctx.isPiRuntime)}\n`}${buildToolUsageGuidelines(
     new Set(
       (AGENT_PRESET_CAPABILITY_GROUPS.find((group) => group.id === 'preview')?.toolNames ?? [])
         .filter((toolName) => !capabilityDisabled('preview') && !toolDisabled(toolName)),
@@ -531,7 +539,7 @@ Pi 没有 Claude Agent SDK 的自动记忆后台机制，但 Profer 已为 Pi �
 5. **会话恢复**：每次收到新任务时，先按需检查：① 如任务需要恢复当前任务状态，先列出当前 cwd 下的会话级 \`.context/\`；② 如任务需要跨会话资料，先列出工作区级 Context（\`${workspacePaths?.workspaceContextDir ?? 'workspace-files/.context/'}\`）；只读取实际存在且与当前任务相关的 \`todo.md\`、计划或主题文档，**不默认读取或创建 \`note.md\`**。随后按需检查 ③ Profer 工作区资料（\`${workspacePaths?.workspaceProfile ?? '工作区根目录/workspace-profile.md'}\`）；若不存在，再按需读取旧版 Profer 资料（\`${workspacePaths?.legacyWorkspaceProfile ?? '工作区根目录/CLAUDE.md'}\`）；④ Auto Memory 索引（\`${workspacePaths?.autoMemoryIndex ?? '.profer/memory/MEMORY.md'}\`）和相关 Skills。**目录为空、目标文件不存在或资料无关时直接跳过；不要读取当前 cwd 下不存在的相对路径 \`CLAUDE.md\`，也不要无差别全量读取。**
 6. **自检习惯**：复杂任务执行过程中，定期回顾 Profer 工作区资料 workspace-profile.md 和两级 .context/ 中的内容，确保行为与已记录的规范和计划保持一致`)
 
-  if (!suppress.has('automation')) {
+  if (!suppress.has('automation') && !capabilityDisabled('automation')) {
     sections.push(`7. **定时任务**：Profer 内置了持久化的定时任务系统（Automation），更适合长期反复、无人值守、有稳定价值的场景。**不要用 TaskCreate、CronCreate 或 Bash cron**，它们都不是真正的 Profer 定时任务。
    \`automation\` 是 Profer 内嵌 Skill，遇到可能反复、长期、持续关注、自动检查、定期汇总、运行记录复盘、已有任务维护等需求时，宁可先触发此 Skill 判断是否适合，也不要漏掉潜在的自动化机会；再通过 Profer 内置的 automation MCP 工具创建、查看、修改、暂停、删除或试运行任务。
    如果只是一次性任务、短期提醒、需要用户实时判断、执行结果没有长期价值，明确告诉用户不建议创建定时任务。
@@ -557,7 +565,11 @@ Pi 没有 Claude Agent SDK 的自动记忆后台机制，但 Profer 已为 Pi �
   )
   const browserGuideline = buildBrowserGuideline(availableBrowserTools, availableWebTools)
   if (browserGuideline) sections.push(browserGuideline)
-
+  // Browser 与 WebSearch/WebFetch 是独立能力组：关闭浏览器时仍应保留公开网页检索入口。
+  if (!browserGuideline) {
+    const webSearchGuideline = buildWebSearchGuideline(availableWebTools)
+    if (webSearchGuideline) sections.push(webSearchGuideline)
+  }
 
   const disabledCapabilities = AGENT_PRESET_CAPABILITY_GROUPS
     .filter((group) => capabilityDisabled(group.id))

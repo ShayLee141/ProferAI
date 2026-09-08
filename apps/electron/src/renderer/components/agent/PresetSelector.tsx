@@ -9,15 +9,17 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { BriefcaseBusiness, AlertTriangle, Settings2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { BriefcaseBusiness, AlertTriangle, Loader2, Settings2 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { agentSessionPresetMapAtom, workspacePresetsAtom } from '@/atoms/agent-preset-atoms'
+import { agentPresetCacheKey, agentPresetsLoadedAtom, workspacePresetsAtom } from '@/atoms/agent-preset-atoms'
 import { agentSessionsAtom, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
-import type { AgentEffort, ProferPermissionMode } from '@profer/shared'
+import type { AgentEffort, AgentPreset, PresetReference, ProferPermissionMode } from '@profer/shared'
 import { cn } from '@/lib/utils'
+import { referenceForSelectablePreset, selectablePresetMatchesReference } from './preset-selector-utils'
 
 /** 预设特性 badge 的中文短标签 */
 const EFFORT_LABEL: Record<AgentEffort, string> = { low: '低', medium: '中', high: '高', max: '最大' }
@@ -42,8 +44,10 @@ function persistCompactMode(on: boolean): void {
 
 interface PresetSelectorProps {
   sessionId: string
-  /** 会话 meta 上持久化的预设 ID（跨重启真源） */
+  /** 会话 meta 上持久化的预设 ID（旧数据兼容）。 */
   persistedPresetId?: string
+  /** 会话 meta 上带作用域的预设引用（当前唯一真源）。 */
+  persistedPresetReference?: PresetReference
   /** 会话所属工作区 slug（预设为工作区级配置） */
   workspaceSlug?: string
   /** 可选受控打开状态，供发送前提示复用同一个预设菜单。 */
@@ -53,11 +57,13 @@ interface PresetSelectorProps {
   onManagePresets?: () => void
 }
 
-export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, open, onOpenChange, onManagePresets }: PresetSelectorProps): React.ReactElement {
+export function PresetSelector({ sessionId, persistedPresetId, persistedPresetReference, workspaceSlug, open, onOpenChange, onManagePresets }: PresetSelectorProps): React.ReactElement {
   const [presets, setPresets] = useAtom(workspacePresetsAtom(workspaceSlug))
+  const loadedPresetCaches = useAtomValue(agentPresetsLoadedAtom)
+  const setLoadedPresetCaches = useSetAtom(agentPresetsLoadedAtom)
   const [internalOpen, setInternalOpen] = React.useState(false)
+  const [switchingReference, setSwitchingReference] = React.useState<PresetReference | null>(null)
   const isOpen = open ?? internalOpen
-  const [presetMap, setPresetMap] = useAtom(agentSessionPresetMapAtom)
   const setAgentSessions = useSetAtom(agentSessionsAtom)
   // 记住上次选择的「极简」紧凑显示偏好（localStorage 惰性初始化）
   const [compactMode, setCompactMode] = React.useState<boolean>(readStoredCompactMode)
@@ -70,45 +76,59 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, op
 
   React.useEffect(() => {
     void window.electronAPI.listAgentPresets(workspaceSlug)
-      .then(setPresets)
+      .then((list) => {
+        setPresets(list)
+        setLoadedPresetCaches((prev) => new Set(prev).add(agentPresetCacheKey(workspaceSlug)))
+      })
       .catch((error) => console.error('[PresetSelector] 加载工作区预设失败:', error))
-  }, [workspaceSlug, capabilitiesVersion, setPresets])
+  }, [workspaceSlug, capabilitiesVersion, setPresets, setLoadedPresetCaches])
 
   // Manager 返回当前工作区可见预设；明确停用项不能出现在菜单中（含元预设）。
   const availablePresets = React.useMemo(
     () => presets.filter((preset) => preset.enabledInWorkspace !== false),
     [presets],
   )
-  const effectiveId = presetMap.get(sessionId) ?? persistedPresetId ?? ''
-  const current = effectiveId ? availablePresets.find((preset) => preset.id === effectiveId) : undefined
-  const presetRequired = !effectiveId || !current
+  const current = persistedPresetReference
+    ? availablePresets.find((preset) => selectablePresetMatchesReference(preset, persistedPresetReference))
+    : availablePresets.find((preset) => preset.id === persistedPresetId)
+  const presetsLoaded = loadedPresetCaches.has(agentPresetCacheKey(workspaceSlug))
+  const presetRequired = presetsLoaded && availablePresets.length > 0 && !current
 
-  const selectPreset = React.useCallback(async (presetId: string) => {
-    const prevId = effectiveId
-    // 乐观更新
-    setPresetMap((prev: Map<string, string>) => {
-      const next = new Map(prev)
-      next.set(sessionId, presetId)
-      return next
-    })
-    try {
-      const updated = await window.electronAPI.updateAgentSessionPreset(sessionId, presetId)
-      setAgentSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, presetId: updated.presetId } : s)))
-    } catch (error) {
-      console.error('[PresetSelector] 切换预设失败，回滚 UI:', error)
-      setPresetMap((prev: Map<string, string>) => {
-        const next = new Map(prev)
-        next.set(sessionId, prevId)
-        return next
-      })
+  const closeMenu = React.useCallback(() => {
+    setInternalOpen(false)
+    onOpenChange?.(false)
+  }, [onOpenChange])
+
+  const selectPreset = React.useCallback(async (preset: AgentPreset) => {
+    if (switchingReference) return
+    const reference = referenceForSelectablePreset(preset, workspaceSlug)
+    if (selectablePresetMatchesReference(preset, persistedPresetReference) || (!persistedPresetReference && preset.id === persistedPresetId)) {
+      closeMenu()
+      return
     }
-  }, [effectiveId, sessionId, setPresetMap, setAgentSessions])
+    setSwitchingReference(reference)
+    try {
+      const updated = await window.electronAPI.rebindAgentSessionPresetReference(sessionId, reference)
+      // 用主进程返回的完整 meta 替换，保证 presetId 与 presetReference 永远同步。
+      setAgentSessions((prev) => prev.map((session) => (session.id === sessionId ? updated : session)))
+      closeMenu()
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('.ProseMirror')?.focus())
+      toast.success(`已切换到「${preset.name}」`, { description: '将在下一轮消息中生效' })
+    } catch (error) {
+      console.error('[PresetSelector] 切换预设失败:', error)
+      toast.error('切换预设失败', {
+        description: error instanceof Error ? error.message : '请刷新预设列表后重试',
+      })
+    } finally {
+      setSwitchingReference(null)
+    }
+  }, [closeMenu, persistedPresetId, persistedPresetReference, sessionId, setAgentSessions, switchingReference, workspaceSlug])
 
   return (
     <TooltipProvider delayDuration={300}>
       <Popover
         open={isOpen}
-        onOpenChange={(nextOpen) => {
+        onOpenChange={(nextOpen: boolean) => {
           setInternalOpen(nextOpen)
           onOpenChange?.(nextOpen)
           // 打开时刷新，保证技能页导入/编辑后的最新预设可见
@@ -153,14 +173,20 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, op
               <button
                 key={preset.id}
                 type="button"
-                onClick={() => { selectPreset(preset.id); requestAnimationFrame(() => document.querySelector<HTMLElement>('.ProseMirror')?.focus()) }}
+                onClick={() => void selectPreset(preset)}
+                disabled={switchingReference !== null}
+                aria-pressed={preset === current}
                 className={cn(
-                  'flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted',
-                  preset.id === effectiveId && 'bg-muted',
+                  'flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60',
+                  preset === current && 'bg-muted',
                 )}
               >
                 <span className="flex items-center gap-1.5 text-xs font-medium">
-                  <span className={cn('w-4 text-center', preset.id === effectiveId ? 'text-primary' : 'text-transparent')}>✓</span>
+                  <span className={cn('flex w-4 justify-center text-center', preset === current ? 'text-primary' : 'text-transparent')}>
+                    {switchingReference && selectablePresetMatchesReference(preset, switchingReference)
+                      ? <Loader2 className="size-3 animate-spin text-primary" aria-hidden="true" />
+                      : '✓'}
+                  </span>
                   {preset.name}
                   {preset.isBuiltin && <span className="rounded bg-muted px-1 py-px text-[10px] font-normal text-foreground/50">内置</span>}
                   {preset.effort && <span className="rounded bg-muted px-1 py-px text-[10px] font-normal text-foreground/50">强度·{EFFORT_LABEL[preset.effort] ?? preset.effort}</span>}

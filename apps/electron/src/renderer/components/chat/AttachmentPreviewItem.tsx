@@ -11,6 +11,7 @@ import * as React from 'react'
 import { X, Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ImageLightbox } from '@/components/ui/image-lightbox'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 interface AttachmentPreviewItemProps {
   /** 原始文件名 */
@@ -29,11 +30,6 @@ interface AttachmentPreviewItemProps {
 /** 判断是否为图片类型 */
 function isImage(mediaType: string): boolean {
   return mediaType.startsWith('image/')
-}
-
-/** 截断文件名显示 */
-function truncateName(name: string, max: number = 20): string {
-  return name.length > max ? name.slice(0, max - 3) + '...' : name
 }
 
 export function AttachmentPreviewItem({
@@ -94,42 +90,50 @@ export function AttachmentPreviewItem({
   }
 
   // 文件预览 — teal 标签样式（对标 Cherry Studio）
+  // hover 时 Tooltip 显示完整文件名：CSS truncate 仅做视觉截断，Tooltip 让用户可查看全名。
   return (
-    <div
-      className={cn(
-        'group/attachment relative flex items-center gap-2 shrink-0',
-        'rounded-lg bg-[#37a5aa]/10 border border-[#37a5aa]/20',
-        'pl-2.5 pr-7 py-1.5 text-[13px] text-[#37a5aa]',
-        'transition-colors hover:bg-[#37a5aa]/15',
-        onClick && 'cursor-pointer',
-        className
-      )}
-      onClick={onClick}
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={onClick ? (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onClick()
-        }
-      } : undefined}
-    >
-      <Paperclip className="size-4 shrink-0" />
-      <span className="max-w-[160px] truncate">{truncateName(filename)}</span>
-      {/* 关闭按钮 */}
-      <button
-        type="button"
-        onClick={handleRemoveClick}
-        onKeyDown={handleRemoveKeyDown}
-        className={cn(
-          'absolute top-1/2 right-1.5 -translate-y-1/2 size-[18px] rounded-full',
-          'flex items-center justify-center',
-          'text-[#37a5aa]/60 hover:text-[#37a5aa] hover:bg-[#37a5aa]/20',
-          'opacity-0 group-hover/attachment:opacity-100 transition-all duration-200'
-        )}
-      >
-        <X className="size-3" />
-      </button>
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className={cn(
+            'group/attachment relative flex items-center gap-2 shrink-0',
+            'rounded-lg bg-[#37a5aa]/10 border border-[#37a5aa]/20',
+            'pl-2.5 pr-7 py-1.5 text-[13px] text-[#37a5aa]',
+            'transition-colors hover:bg-[#37a5aa]/15',
+            onClick && 'cursor-pointer',
+            className
+          )}
+          onClick={onClick}
+          role={onClick ? 'button' : undefined}
+          tabIndex={onClick ? 0 : undefined}
+          onKeyDown={onClick ? (e: React.KeyboardEvent) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              onClick()
+            }
+          } : undefined}
+        >
+          <Paperclip className="size-4 shrink-0" />
+          <span className="max-w-[200px] truncate">{filename}</span>
+          {/* 关闭按钮 */}
+          <button
+            type="button"
+            onClick={handleRemoveClick}
+            onKeyDown={handleRemoveKeyDown}
+            className={cn(
+              'absolute top-1/2 right-1.5 -translate-y-1/2 size-[18px] rounded-full',
+              'flex items-center justify-center',
+              'text-[#37a5aa]/60 hover:text-[#37a5aa] hover:bg-[#37a5aa]/20',
+              'opacity-0 group-hover/attachment:opacity-100 transition-all duration-200'
+            )}
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <p className="max-w-xs break-all">{filename}</p>
+      </TooltipContent>
+    </Tooltip>
   )
 }

@@ -20,6 +20,7 @@ declare global {
 let registeredAccelerators: string[] = []
 /** 当前模拟设置（测试内可变） */
 let mockSettings: Record<string, unknown> = {}
+const quickTaskDefault = process.platform === 'darwin' ? 'CommandOrControl+Shift+Space' : 'Alt+Space'
 
 beforeAll(() => {
   registeredAccelerators = globalThis.__proferElectronTestHooks.registeredAccelerators
@@ -39,7 +40,7 @@ describe('快速任务开关化（2026-08-08）', () => {
     const { registerGlobalShortcut } = await import('./global-shortcut-service')
     const ok = registerGlobalShortcut('quick-task', () => {})
     expect(ok).toBe(false)
-    expect(registeredAccelerators).not.toContain('Alt+Space')
+    expect(registeredAccelerators).not.toContain(quickTaskDefault)
   })
 
   test('quick-taskEnabled=false 时不注册', async () => {
@@ -47,15 +48,15 @@ describe('快速任务开关化（2026-08-08）', () => {
     const { registerGlobalShortcut } = await import('./global-shortcut-service')
     const ok = registerGlobalShortcut('quick-task', () => {})
     expect(ok).toBe(false)
-    expect(registeredAccelerators).not.toContain('Alt+Space')
+    expect(registeredAccelerators).not.toContain(quickTaskDefault)
   })
 
-  test('quickTaskEnabled=true 时注册 Alt+Space', async () => {
+  test('quickTaskEnabled=true 时注册当前平台默认组合键', async () => {
     mockSettings = { quickTaskEnabled: true }
     const { registerGlobalShortcut } = await import('./global-shortcut-service')
     const ok = registerGlobalShortcut('quick-task', () => {})
     expect(ok).toBe(true)
-    expect(registeredAccelerators).toContain('Alt+Space')
+    expect(registeredAccelerators).toContain(quickTaskDefault)
   })
 
   test('reregisterAllGlobalShortcuts 随开关变化生效', async () => {
@@ -63,15 +64,15 @@ describe('快速任务开关化（2026-08-08）', () => {
     // 关闭态注册 → 不生效
     mockSettings = { quickTaskEnabled: false }
     registerGlobalShortcut('quick-task', () => {})
-    expect(registeredAccelerators).not.toContain('Alt+Space')
+    expect(registeredAccelerators).not.toContain(quickTaskDefault)
     // 打开开关 → 重新注册生效
     mockSettings = { quickTaskEnabled: true }
     reregisterAllGlobalShortcuts()
-    expect(registeredAccelerators).toContain('Alt+Space')
+    expect(registeredAccelerators).toContain(quickTaskDefault)
     // 关闭开关 → 注销
     mockSettings = { quickTaskEnabled: false }
     reregisterAllGlobalShortcuts()
-    expect(registeredAccelerators).not.toContain('Alt+Space')
+    expect(registeredAccelerators).not.toContain(quickTaskDefault)
   })
 })
 
@@ -96,5 +97,28 @@ describe('show-main-window 始终注册（不受开关影响）', () => {
     const { registerGlobalShortcut } = await import('./global-shortcut-service')
     const ok = registerGlobalShortcut('show-main-window', () => {})
     expect(ok).toBe(true)
+  })
+})
+
+
+describe('快速任务自定义绑定', () => {
+  test('保留用户自定义组合键，不被新版默认值覆盖', async () => {
+    mockSettings = {
+      quickTaskEnabled: true,
+      shortcutOverrides: { 'quick-task': { mac: 'Alt+Space', win: 'Ctrl+Shift+Space' } },
+    }
+    const { registerGlobalShortcut } = await import('./global-shortcut-service')
+    expect(registerGlobalShortcut('quick-task', () => {})).toBe(true)
+    expect(registeredAccelerators).toContain(process.platform === 'darwin' ? 'Alt+Space' : 'Ctrl+Shift+Space')
+  })
+
+  test('显式禁用快捷键时不回退到默认组合键', async () => {
+    mockSettings = {
+      quickTaskEnabled: true,
+      shortcutOverrides: { 'quick-task': { mac: null, win: null } },
+    }
+    const { registerGlobalShortcut } = await import('./global-shortcut-service')
+    expect(registerGlobalShortcut('quick-task', () => {})).toBe(false)
+    expect(registeredAccelerators).toEqual([])
   })
 })

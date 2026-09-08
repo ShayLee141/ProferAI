@@ -11,7 +11,7 @@
 
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
-import { AlertCircle, FileText, Library, Pencil, Quote, RotateCcw, Trash2 } from 'lucide-react'
+import { AlertCircle, FileText, History, Library, Pencil, Quote, RotateCcw, Trash2 } from 'lucide-react'
 import {
   Message,
   MessageHeader,
@@ -121,6 +121,8 @@ interface ChatMessageItemProps {
   isInlineEditing?: boolean
   /** 是否并排模式（用户消息不右对齐） */
   isParallelMode?: boolean
+  /** 打开"历史版本抽屉"回调（仅 user 消息） */
+  onOpenHistory?: () => void
 }
 
 export const ChatMessageItem = React.memo(function ChatMessageItem({
@@ -135,6 +137,7 @@ export const ChatMessageItem = React.memo(function ChatMessageItem({
   onCancelInlineEdit,
   isInlineEditing = false,
   isParallelMode = false,
+  onOpenHistory,
 }: ChatMessageItemProps): React.ReactElement {
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
@@ -298,6 +301,14 @@ export const ChatMessageItem = React.memo(function ChatMessageItem({
                 onClick={() => setDeleteDialogOpen(true)}
               >
                 <Trash2 className="size-3.5" />
+              </MessageAction>
+            )}
+            {message.role === 'user' && onOpenHistory && (
+              <MessageAction
+                tooltip="查看历史版本"
+                onClick={() => onOpenHistory()}
+              >
+                <History className="size-3.5" />
               </MessageAction>
             )}
             {message.role === 'assistant' && message.error && (

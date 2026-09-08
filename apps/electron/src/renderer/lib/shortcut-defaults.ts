@@ -174,7 +174,7 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     id: 'quick-task',
     name: '快速任务',
     description: '唤起浮动快速任务输入窗口',
-    defaultMac: 'Alt+Space',
+    defaultMac: 'Cmd+Shift+Space',
     defaultWin: 'Alt+Space',
     category: 'global',
     global: true,

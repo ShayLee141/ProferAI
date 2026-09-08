@@ -319,10 +319,15 @@ export function normalizePresetReference(reference: PresetReference, contextWork
 
 /** 严格解析同一引用；Claude 与 Pi runtime 均应调用此入口。 */
 export function resolvePresetReference(reference: PresetReference, contextWorkspaceSlug?: string): AgentPreset {
-  return resolvePresetReferenceInternal(reference, contextWorkspaceSlug, new Set<string>())
+  return resolvePresetReferenceInternal(reference, contextWorkspaceSlug, new Set<string>(), true)
 }
 
-function resolvePresetReferenceInternal(reference: PresetReference, contextWorkspaceSlug: string | undefined, visiting: Set<string>): AgentPreset {
+function resolvePresetReferenceInternal(
+  reference: PresetReference,
+  contextWorkspaceSlug: string | undefined,
+  visiting: Set<string>,
+  enforceWorkspaceAvailability: boolean,
+): AgentPreset {
   const normalized = normalizePresetReference(reference, contextWorkspaceSlug)
   const identity = `${normalized.presetScope}:${normalized.workspaceSlug ?? ''}:${normalized.presetId}`
   if (visiting.has(identity)) {
@@ -330,7 +335,7 @@ function resolvePresetReferenceInternal(reference: PresetReference, contextWorks
   }
   const nextVisiting = new Set(visiting)
   nextVisiting.add(identity)
-  if ((normalized.presetScope === 'user-global' || normalized.presetScope === 'builtin-meta') && contextWorkspaceSlug) {
+  if (enforceWorkspaceAvailability && (normalized.presetScope === 'user-global' || normalized.presetScope === 'builtin-meta') && contextWorkspaceSlug) {
     const globalConfig = readGlobalConfig()
     const scopes = globalConfig.workspaceScopes?.[normalized.presetId]
     if (scopes && !scopes.includes(contextWorkspaceSlug)) {
@@ -350,14 +355,18 @@ function resolvePresetReferenceInternal(reference: PresetReference, contextWorks
   if (raw.migrationStatus === 'invalid-base') {
     throw new AgentPresetError('PRESET_INVALID_BASE', raw.migrationReason ?? `预设基座无效: ${normalized.presetId}`, { presetId: normalized.presetId })
   }
-  if (normalized.presetVersion && raw.version && normalized.presetVersion !== raw.version) {
+  // builtin-meta 是随 Profer 发布演进的元预设：旧会话/派生引用中的版本只用于审计，
+  // 不能阻断它们跟随新的元预设定义。用户全局/工作区预设仍执行严格版本校验。
+  if (normalized.presetScope !== 'builtin-meta' && normalized.presetVersion && raw.version && normalized.presetVersion !== raw.version) {
     throw new AgentPresetError('PRESET_CONCURRENT_UPDATE', `预设版本已变化: ${normalized.presetId}`)
   }
   const baseReference = raw.basePresetReference ?? (raw.basePresetId
     ? { presetId: raw.basePresetId, presetScope: 'builtin-meta' as const }
     : undefined)
   if (!baseReference) return withSuppressMapping(raw)
-  const base = resolvePresetReferenceInternal(baseReference, normalized.workspaceSlug, nextVisiting)
+  // 基座是定义依赖，不是可选预设。即使元/全局基座在当前工作区的选择器中停用，
+  // 已启用的工作区派生预设仍应能解析和使用；只有顶层选择才检查工作区生效范围。
+  const base = resolvePresetReferenceInternal(baseReference, normalized.workspaceSlug, nextVisiting, false)
   return withSuppressMapping(mergeAgentPreset(base, raw))
 }
 

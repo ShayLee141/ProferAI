@@ -6,9 +6,9 @@
  */
 
 import * as React from 'react'
-import { useAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { settingsOpenAtom } from '@/atoms/settings-tab'
+import { settingsOpenAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from '@/atoms/settings-tab'
 import { SettingsPanel, type SettingsTabItem } from './SettingsPanel'
 
 export interface SettingsDialogProps {
@@ -18,9 +18,20 @@ export interface SettingsDialogProps {
 
 export function SettingsDialog({ tabsOverride }: SettingsDialogProps): React.ReactElement {
   const [open, setOpen] = useAtom(settingsOpenAtom)
+  const channelFormDirty = useAtomValue(channelFormDirtyAtom)
+  const setCloseRequested = useSetAtom(settingsCloseRequestedAtom)
+
+  // 遮罩点击和 Esc 与面板关闭按钮共用未保存确认流程。
+  const handleOpenChange = (nextOpen: boolean): void => {
+    if (!nextOpen && channelFormDirty) {
+      setCloseRequested(true)
+      return
+    }
+    setOpen(nextOpen)
+  }
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+    <DialogPrimitive.Root open={open} onOpenChange={handleOpenChange}>
       <DialogPrimitive.Portal>
         {/* 轻遮罩 — 与 Dialog primitive 统一使用 Surface Contract overlay。 */}
         <DialogPrimitive.Overlay

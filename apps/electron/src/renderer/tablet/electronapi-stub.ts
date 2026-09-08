@@ -91,6 +91,11 @@ interface TabletRemoteClient {
   chatStopGeneration(conversationId: string): Promise<unknown>
   chatDeleteMessage(conversationId: string, messageId: string): Promise<unknown>
   chatTruncateMessagesFrom(conversationId: string, messageId: string, preserveFirstMessageAttachments?: boolean): Promise<unknown>
+  chatGetBranch(conversationId: string): Promise<unknown>
+  chatSetActivePath(conversationId: string, path: string[]): Promise<unknown>
+  chatGetBranchTree(conversationId: string): Promise<unknown>
+  chatForkBranchAt(conversationId: string, anchorId: string, payload: Record<string, unknown>): Promise<unknown>
+  chatGetMessageContent(conversationId: string, messageId: string): Promise<unknown>
   chatUpdateContextDividers(conversationId: string, dividers: string[]): Promise<unknown>
   chatGenerateTitle(input: GenerateTitleInput): Promise<unknown>
   chatSaveAttachment(input: { conversationId: string; filename: string; mediaType: string; data: string }): Promise<unknown>
@@ -732,6 +737,26 @@ export function installElectronApiStub(): void {
     truncateMessagesFrom: (conversationId: string, messageId: string, preserveFirstMessageAttachments?: boolean) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.chatTruncateMessagesFrom(conversationId, messageId, preserveFirstMessageAttachments)
+    },
+    getBranch: (conversationId: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.chatGetBranch(conversationId)
+    },
+    setActivePath: (conversationId: string, path: string[]) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.chatSetActivePath(conversationId, path)
+    },
+    getBranchTree: (conversationId: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.chatGetBranchTree(conversationId)
+    },
+    forkBranchAt: (conversationId: string, anchorId: string, payload: Record<string, unknown>) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.chatForkBranchAt(conversationId, anchorId, payload)
+    },
+    getMessageContent: (conversationId: string, messageId: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.chatGetMessageContent(conversationId, messageId)
     },
     updateContextDividers: (conversationId: string, dividers: string[]) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))

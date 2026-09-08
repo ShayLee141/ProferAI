@@ -3,6 +3,7 @@
  */
 
 import * as React from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { ExternalLink, Loader2, TestTube2, Mic, MicOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -16,6 +17,9 @@ import {
   SettingsToggle,
 } from './primitives'
 import type { VoiceDictationSettings, MicPermissionResult } from '../../../types'
+import { voiceDictationSettingsAtom } from '@/atoms/voice-dictation-atoms'
+import { shortcutOverridesAtom } from '@/atoms/shortcut-atoms'
+import { getAcceleratorDisplay, getActiveAccelerator } from '@/lib/shortcut-registry'
 
 const ENDPOINT_OPTIONS = [
   { value: 'async', label: '双向流式优化版' },
@@ -41,6 +45,13 @@ const VOLCENGINE_SPEECH_SERVICE_URL = 'https://console.volcengine.com/speech/ser
 
 export function VoiceInputSettings(): React.ReactElement {
   const [settings, setSettings] = React.useState<VoiceDictationSettings | null>(null)
+  const shortcutOverrides = useAtomValue(shortcutOverridesAtom)
+  const voiceShortcut = React.useMemo(
+    () => getActiveAccelerator('voice-dictation'),
+    [shortcutOverrides],
+  )
+  const voiceShortcutDisplay = getAcceleratorDisplay(voiceShortcut) || '快捷键已禁用'
+  const setVoiceDictationSettings = useSetAtom(voiceDictationSettingsAtom)
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
   const [micPermission, setMicPermission] = React.useState<MicPermissionResult | null>(null)
@@ -57,13 +68,16 @@ export function VoiceInputSettings(): React.ReactElement {
 
   React.useEffect(() => {
     window.electronAPI.getVoiceDictationSettings()
-      .then(setSettings)
+      .then((loadedSettings) => {
+        setSettings(loadedSettings)
+        setVoiceDictationSettings(loadedSettings)
+      })
       .catch((error) => {
         console.error('[语音输入] 加载设置失败:', error)
         toast.error('加载语音输入设置失败')
       })
     refreshMicPermission()
-  }, [refreshMicPermission])
+  }, [refreshMicPermission, setVoiceDictationSettings])
 
   const handleRequestMicPermission = React.useCallback(async () => {
     setRequestingPermission(true)
@@ -87,18 +101,22 @@ export function VoiceInputSettings(): React.ReactElement {
     if (!settings) return
     const optimistic = { ...settings, ...updates, provider: 'doubao' as const }
     setSettings(optimistic)
+    setVoiceDictationSettings(optimistic)
     setSaving(true)
     try {
       const saved = await window.electronAPI.updateVoiceDictationSettings(optimistic)
       setSettings(saved)
+      setVoiceDictationSettings(saved)
       window.electronAPI.reregisterGlobalShortcuts().catch(console.error)
     } catch (error) {
+      setSettings(settings)
+      setVoiceDictationSettings(settings)
       console.error('[语音输入] 保存设置失败:', error)
       toast.error('保存语音输入设置失败')
     } finally {
       setSaving(false)
     }
-  }, [settings])
+  }, [settings, setVoiceDictationSettings])
 
   const handleTest = React.useCallback(async () => {
     if (!settings) return
@@ -131,7 +149,7 @@ export function VoiceInputSettings(): React.ReactElement {
     <div className="space-y-6">
       <SettingsSection
         title="豆包流式语音输入"
-        description="通过全局快捷键唤起浮窗，实时识别语音，停止后写入 Profer 输入框或当前光标位置。"
+        description="启用后会显示在 Chat、Agent 与便签输入工具栏中，也可通过全局快捷键唤起浮窗。"
         action={
           <Button
             variant="outline"
@@ -216,7 +234,7 @@ export function VoiceInputSettings(): React.ReactElement {
         <SettingsCard>
           <SettingsToggle
             label="启用语音输入"
-            description="启用后可使用 Ctrl+～ 打开语音输入浮窗，再按一次停止。"
+            description={`启用后显示输入工具栏的麦克风按钮，也可使用 ${voiceShortcutDisplay} 打开语音输入浮窗，再按一次停止；可在快捷键管理中修改。`}
             checked={settings.enabled}
             onCheckedChange={(enabled) => update({ enabled })}
           />

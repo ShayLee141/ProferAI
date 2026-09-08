@@ -1069,7 +1069,7 @@ if (isQuickTaskWindow) {
       <React.StrictMode>
         <ThemeInitializer />
         <VoiceDictationApp />
-        <Toaster position="top-right" />
+        <Toaster position="top-right" offset={96} />
       </React.StrictMode>
     )
   })
@@ -1081,7 +1081,7 @@ if (isQuickTaskWindow) {
         <MarkdownFontSizeInitializer />
         <UiScaleInitializer />
         <DetachedPreviewApp />
-        <Toaster position="top-right" />
+        <Toaster position="top-right" offset={96} />
       </React.StrictMode>
     )
   })
@@ -1096,7 +1096,7 @@ if (isQuickTaskWindow) {
         <ThemeInitializer />
         <PlanningInitializer />
         <PlanningWindowApp />
-        <Toaster position="top-right" />
+        <Toaster position="top-right" offset={96} />
       </React.StrictMode>
     )
   })
@@ -1128,7 +1128,7 @@ if (isQuickTaskWindow) {
       <TabSwitcher />
       <App />
       <UpdateDialog />
-      <Toaster position="top-right" />
+      <Toaster position="top-right" offset={96} />
     </React.StrictMode>
   )
 }

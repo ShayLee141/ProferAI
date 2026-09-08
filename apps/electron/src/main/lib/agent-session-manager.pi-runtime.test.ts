@@ -146,6 +146,23 @@ describe('Pi runtime 会话持久化隔离', () => {
     expect(restoredSecond).toMatchObject({ channelId: 'channel-b', modelId: 'model-b' })
   })
 
+  test('Given stale attached paths When startup cleanup runs Then removes paths without changing session recency', () => {
+    const missingDirectory = join(root, 'deleted-worktree')
+    const missingFile = join(root, 'deleted-file.txt')
+    const meta = sessions.createAgentSession('stale attachments')
+    const attached = sessions.updateAgentSessionMeta(meta.id, {
+      attachedDirectories: [missingDirectory],
+      attachedFiles: [missingFile],
+    })
+
+    expect(sessions.cleanupStaleAttachedPaths()).toBe(2)
+    expect(sessions.getAgentSessionMeta(meta.id)).toMatchObject({
+      updatedAt: attached.updatedAt,
+      attachedDirectories: undefined,
+      attachedFiles: undefined,
+    })
+  })
+
   test('Given a Claude session changes to Pi When updating runtime Then clears all Claude-only resume metadata', () => {
     const meta = sessions.createAgentSession('runtime switch')
     sessions.updateAgentSessionMeta(meta.id, {

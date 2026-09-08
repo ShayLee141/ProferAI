@@ -305,7 +305,7 @@ export function AgentSkillsView(): React.ReactElement {
 
   if (!data.hasWorkspace && !globalConfigOpen) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-content-area text-center">
         <div className="flex size-16 items-center justify-center rounded-2xl bg-foreground/[0.04]">
           <Blocks className="size-8 text-foreground/30" />
         </div>
@@ -330,7 +330,7 @@ export function AgentSkillsView(): React.ReactElement {
   return (
     <div
       data-profer-navigation-region="agent-skills"
-      className="flex h-full flex-col overflow-hidden"
+      className="flex h-full flex-col overflow-hidden bg-content-area"
     >
       {/* 顶部 50px 留给 AppShell 的全局 drag-region。不能把含 pt-14 的外层设为
           no-drag，否则它的布局盒会覆盖窗口顶端并抵消全局拖拽区。交互控件从 56px

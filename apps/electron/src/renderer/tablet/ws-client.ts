@@ -652,6 +652,26 @@ export class WsClient {
     return this.sendCommand({ type: 'chat_truncate_messages_from', conversationId, messageId, preserveFirstMessageAttachments })
   }
 
+  chatGetBranch(conversationId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'chat_get_branch', conversationId })
+  }
+
+  chatSetActivePath(conversationId: string, path: string[]): Promise<unknown> {
+    return this.sendCommand({ type: 'chat_set_active_path', conversationId, path })
+  }
+
+  chatGetBranchTree(conversationId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'chat_get_branch_tree', conversationId })
+  }
+
+  chatForkBranchAt(conversationId: string, anchorId: string, payload: Record<string, unknown>): Promise<unknown> {
+    return this.sendCommand({ type: 'chat_fork_branch_at', conversationId, anchorId, payload })
+  }
+
+  chatGetMessageContent(conversationId: string, messageId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'chat_get_message_content', conversationId, messageId })
+  }
+
   chatUpdateContextDividers(conversationId: string, dividers: string[]): Promise<unknown> {
     return this.sendCommand({ type: 'chat_update_context_dividers', conversationId, dividers })
   }

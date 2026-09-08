@@ -110,17 +110,39 @@ export interface PageEstimate {
 
 // ===== 消息相关 =====
 
-/**
- * 消息角色
- */
 export type MessageRole = 'user' | 'assistant' | 'system'
 
 /**
+ * 被截断的历史段（持久化在 sidecar JSONL，仅历史数据兼容）
+ *
+ * 旧的"重发时截断并写入 sidecar"模型已被分支树取代。保留本类型仅用于
+ * 已有 `.discarded.jsonl` 文件的兼容读取 + 历史搜索能命中旧段。新写入不再产生。
+ */
+export interface DiscardedSegmentRecord {
+  /** 该记录的全局唯一 ID（用于还原与定位） */
+  entryId: string
+  /** 触发截断时的时间戳 */
+  discardedAt: number
+  /** 触发截断的入口原因 */
+  reason: 'inline-edit' | 'edit-resend' | 'resend'
+  /** 触发截断的那条 user message 的 ID（用于 UI 关联） */
+  anchorMessageId: string
+  /** 整段被丢弃的消息列表 */
+  segment: ChatMessage[]
+}
+
+/**
  * 聊天消息
+ *
+ * 消息之间通过 `parentId` 形成 DAG（或简单的链）。一条 user 消息可以有多个
+ * assistant 回复子节点，多条 user 消息也可以拥有同一个 parent（即兄弟节点）。
+ * 任何时刻 ChatView 展示的是 `ConversationMeta.activePath` 这条 root→leaf 链。
  */
 export interface ChatMessage {
   /** 消息唯一标识 */
   id: string
+  /** 父亲节点 ID（首条 user 消息为 null） */
+  parentId: string | null
   /** 发送者角色 */
   role: MessageRole
   /** 消息内容 */
@@ -188,13 +210,69 @@ export interface ConversationMeta {
   pinned?: boolean
   /** 是否已归档 */
   archived?: boolean
+  /**
+   * 主视图展示的"当前激活分支"消息 ID 序列（root→leaf）。
+   * - 不存在或为空：取首条消息为起点（用于兼容性）
+   * - 列表长度 ≥ 1 时：必须构成从某条 parentId=null 的根消息开始的合法链
+   */
+  activePath?: string[]
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
   updatedAt: number
 }
 
+/**
+ * 单条消息在分支树中的概要信息
+ *
+ * 给 BranchTreeView 用，避免把全量 ChatMessage（含 content / attachments）传到 UI。
+ */
+export interface BranchTreeNode {
+  /** 消息 ID */
+  id: string
+  /** 父亲消息 ID */
+  parentId: string | null
+  /** 角色 */
+  role: MessageRole
+  /** 创建时间戳 */
+  createdAt: number
+  /** 摘要文本（首 100 字） */
+  preview: string
+  /** 子节点引用（按创建时间正序） */
+  childIds: string[]
+}
+
+/**
+ * 对话消息 DAG 的快照
+ *
+ * 由后端按主 JSONL 构建，UI 拿到后用 id → node map 渲染树。
+ */
+export interface BranchTreeSnapshot {
+  /** 该对话下所有节点的 map */
+  nodes: Record<string, BranchTreeNode>
+  /** 所有"parentId 为 null"的根节点 ID 列表（通常 1 个） */
+  rootIds: string[]
+  /** 当前激活路径（仅在切换展示时使用） */
+  activePath: string[]
+}
+
 // ===== 消息搜索 =====
+
+/**
+ * 搜索结果中"版本来源"的标记
+ *
+ * 用于在 UI 里区分命中的是当前可见内容、消息内的版本历史，还是已被截断的历史段。
+ */
+export interface MessageSearchVersion {
+  /** 命中来自哪个视角 */
+  source: 'current' | 'history' | 'discarded'
+  /** 仅 history 时存在：该条历史在 history 数组中的索引 */
+  index?: number
+  /** 命中版本产生的时间戳（history / discarded 才有） */
+  editedAt?: number
+  /** 触发版本产生的原因（history / discarded 才有） */
+  reason?: 'inline-edit' | 'edit-resend' | 'resend'
+}
 
 /**
  * 消息搜索结果
@@ -204,7 +282,7 @@ export interface MessageSearchResult {
   conversationId: string
   /** 对话标题 */
   conversationTitle: string
-  /** 消息 ID */
+  /** 消息 ID（current / history 命中指当前 messageId；discarded 命中指原 messageId） */
   messageId: string
   /** 消息角色 */
   role: MessageRole
@@ -216,6 +294,10 @@ export interface MessageSearchResult {
   matchLength: number
   /** 是否已归档 */
   archived?: boolean
+  /** 版本来源标签（默认视为 current） */
+  version?: MessageSearchVersion
+  /** 仅 discarded 命中存在：所属历史段的 entryId */
+  segmentEntryId?: string
 }
 
 // ===== 消息发送 =====
@@ -248,6 +330,11 @@ export interface ChatSendInput {
   thinkingEnabled?: boolean
   /** 本次请求启用的工具 ID 列表（由前端工具选择器决定） */
   enabledToolIds?: string[]
+  /**
+   * 重发 / 编辑后重发场景：该 user 消息节点已由 forkBranchAt 创建并写入 JSONL。
+   * 为 true 时 sendMessage 不再追加一条重复的 user 消息，且从发送给模型的历史中剔除该节点本身。
+   */
+  pendingUserMessageId?: string
 }
 
 // ===== 标题生成 =====
@@ -414,8 +501,18 @@ export const CHAT_IPC_CHANNELS = {
   STOP_GENERATION: 'chat:stop-generation',
   /** 删除消息 */
   DELETE_MESSAGE: 'chat:delete-message',
-  /** 从指定消息开始截断后续消息（包含该消息） */
+  /** 从指定消息开始截断后续消息（包含该消息）— 已废弃，改用分支模型 */
   TRUNCATE_MESSAGES_FROM: 'chat:truncate-messages-from',
+  /** 获取当前对话的"激活分支"线性消息流（root→leaf） */
+  GET_BRANCH: 'chat:get-branch',
+  /** 设置对话的激活分支消息 ID 序列 */
+  SET_ACTIVE_PATH: 'chat:set-active-path',
+  /** 获取对话全量分支树快照（nodes + rootIds + activePath） */
+  GET_BRANCH_TREE: 'chat:get-branch-tree',
+  /** 在指定 anchor 的兄弟位置 fork 一条新 user message（用于重发/编辑重发） */
+  FORK_BRANCH_AT: 'chat:fork-branch-at',
+  /** 按消息 ID 拉取单条消息的完整 content（hover popover 用） */
+  GET_MESSAGE_CONTENT: 'chat:get-message-content',
   /** 更新上下文分隔线 */
   UPDATE_CONTEXT_DIVIDERS: 'chat:update-context-dividers',
   /** 生成对话标题 */

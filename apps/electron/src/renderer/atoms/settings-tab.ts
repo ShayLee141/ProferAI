@@ -9,7 +9,6 @@
  * - agent: Agent 配置
  * - tools: Chat 工具
  * - bots: 远程连接
- * - voice-input: 语音输入
  * - shortcuts: 快捷键管理
  * - appearance: 外观设置
  * - proxy: 代理设置
@@ -25,7 +24,7 @@
 
 import { atom } from 'jotai'
 
-export type SettingsTab = 'general' | 'account' | 'channels' | 'appearance' | 'about' | 'agent' | 'prompts' | 'tools' | 'bots' | 'tutorial' | 'shortcuts' | 'voice-input' | 'team' | 'credits' | 'subscription' | 'openapi' | 'data-management' | 'proxy' | 'devices' | 'connection' | 'notifications'
+export type SettingsTab = 'general' | 'account' | 'channels' | 'appearance' | 'about' | 'agent' | 'prompts' | 'tools' | 'bots' | 'tutorial' | 'shortcuts' | 'team' | 'credits' | 'subscription' | 'openapi' | 'data-management' | 'proxy' | 'devices' | 'connection' | 'notifications'
 
 /** 当前设置标签页（不持久化，每次打开设置默认显示通用偏好） */
 export const settingsTabAtom = atom<SettingsTab>('general')

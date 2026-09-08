@@ -8,7 +8,7 @@ import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
-import { createConversation, appendMessage } from './conversation-manager'
+import { createConversation, appendMessage, updateConversationMeta } from './conversation-manager'
 import { getConversationAttachmentsDir } from './config-paths'
 import type { ConversationMeta, FileAttachment, ChatMessage } from '@profer/shared'
 
@@ -92,6 +92,7 @@ export function createWelcomeConversation(): ConversationMeta | null {
     const now = Date.now()
     const userMessage: ChatMessage = {
       id: randomUUID(),
+      parentId: null,
       role: 'user',
       content: '你好，我是 Profer 的新用户，希望快速上手。这是完整的使用教程，作为你的参考。',
       createdAt: now,
@@ -102,6 +103,7 @@ export function createWelcomeConversation(): ConversationMeta | null {
     // 4. 追加 assistant 欢迎消息（引导式对话：先了解用户，再生成个性化最佳实践）
     const assistantMessage: ChatMessage = {
       id: randomUUID(),
+      parentId: userMessage.id,
       role: 'assistant',
       content: `你好，欢迎来到 Profer！Profer 是一个通用的 Agent，其实它可以完成任何事，说实话这也挺难的，因为你要构建完整的工作环境才能做到，这会涉及到一些新的概念或者思考方式，不过别担心，我们做了很多设计可以帮助你靠谱稳定的越用越好用。
 
@@ -118,6 +120,11 @@ export function createWelcomeConversation(): ConversationMeta | null {
       model: 'Profer',
     }
     appendMessage(meta.id, assistantMessage)
+
+    // 激活路径初始化为该对话的两条消息
+    updateConversationMeta(meta.id, {
+      activePath: [userMessage.id, assistantMessage.id],
+    })
 
     console.log(`[教程服务] 已创建欢迎对话: ${meta.id}`)
     return meta

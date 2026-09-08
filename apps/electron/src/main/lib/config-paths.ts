@@ -135,6 +135,19 @@ export function getConversationMessagesPath(id: string): string {
 }
 
 /**
+ * 获取指定对话的"历史版本丢弃段"文件路径
+ *
+ * 用于保留被 resend / edit-resend 截断的旧消息段，以便在 UI 中查看与还原。
+ * 一个对话一个文件，逐行追加 JSON。
+ *
+ * @param id 对话 ID
+ * @returns ~/.profer/conversations/{id}.discarded.jsonl
+ */
+export function getConversationDiscardedPath(id: string): string {
+  return join(getConversationsDir(), `${id}.discarded.jsonl`)
+}
+
+/**
  * 获取附件存储根目录
  *
  * 如果目录不存在则自动创建。

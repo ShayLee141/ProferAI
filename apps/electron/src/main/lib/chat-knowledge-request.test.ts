@@ -22,7 +22,7 @@ describe('Chat provider 资料请求', () => {
   })
 
   test('Given 当前问题无引用但有效历史有引用 When 准备 provider 内容 Then 只使用未被上下文裁剪的历史 allowlist', async () => {
-    const history: ChatMessage[] = [{ id: 'message-1', role: 'user', content: '先前问题', createdAt: 1, knowledgeReferences: [reference] }]
+    const history: ChatMessage[] = [{ id: 'message-1', parentId: null, role: 'user', content: '先前问题', createdAt: 1, knowledgeReferences: [reference] }]
     const prepared = await prepareChatKnowledgeRequest(
       { userMessage: '继续说明', history },
       { enrichMessage: async (message) => message, search: async (_query, ids) => { expect(ids).toEqual([reference.itemId]); return [searchResult('历史资料的受控片段')] } },

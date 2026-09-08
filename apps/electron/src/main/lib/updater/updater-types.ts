@@ -7,6 +7,7 @@
 /** 更新状态 */
 export type UpdateStatus =
   | { status: 'idle' }
+  | { status: 'disabled' }
   | { status: 'checking' }
   | { status: 'available'; version: string; releaseNotes?: string }
   | { status: 'downloading'; version: string; progress: DownloadProgress }

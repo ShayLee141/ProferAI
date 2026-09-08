@@ -183,6 +183,8 @@ interface ChatMessagesProps {
   onDeleteDivider?: (messageId: string) => void
   /** 加载更多历史消息回调 */
   onLoadMore?: () => Promise<void>
+  /** 打开"历史版本抽屉"回调（用于从单条消息的"查看历史"按钮触发） */
+  onOpenHistory?: (anchorMessageId?: string) => void
 }
 
 /** 空状态引导 — 使用 WelcomeEmptyState */
@@ -210,6 +212,7 @@ export function ChatMessages({
   inlineEditingMessageId,
   onDeleteDivider,
   onLoadMore,
+  onOpenHistory,
 }: ChatMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const channels = useAtomValue(channelsAtom)
@@ -416,6 +419,7 @@ export function ChatMessages({
                     onSubmitInlineEdit={onSubmitInlineEdit}
                     onCancelInlineEdit={onCancelInlineEdit}
                     isInlineEditing={msg.id === inlineEditingMessageId}
+                    onOpenHistory={onOpenHistory ? () => onOpenHistory(msg.id) : undefined}
                   />
                 </div>
                 {/* 分隔线 */}

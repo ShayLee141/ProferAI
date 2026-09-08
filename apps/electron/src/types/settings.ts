@@ -301,7 +301,7 @@ export interface AppSettings {
   appIconVariant?: string
   /** 语音输入设置（Access Token 以加密态存储，由专用服务解密后返回渲染进程） */
   voiceDictation?: VoiceDictationPersistedSettings
-  /** 是否启用快速任务窗口（Alt+Space 全局唤起，默认 false，启用后预创建隐藏窗口） */
+  /** 是否启用快速任务窗口（使用当前平台全局快捷键，默认 false，启用后预创建隐藏窗口） */
   quickTaskEnabled?: boolean
   /** 飞书 Session 镜像设置：每个 Profer Session 可创建一个仅包含用户与指定 Bot 的飞书群 */
   feishuSessionMirror?: FeishuSessionMirrorSettings
