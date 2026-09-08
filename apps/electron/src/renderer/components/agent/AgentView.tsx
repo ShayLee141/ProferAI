@@ -36,7 +36,7 @@ import { PlanModeDashedBorder } from './PlanModeDashedBorder'
 import { ModelSelector } from '@/components/chat/ModelSelector'
 import { AttachmentPreviewItem } from '@/components/chat/AttachmentPreviewItem'
 import { QuotedSelectionChip } from '@/components/diff/QuotedSelectionChip'
-import { RichTextInput } from '@/components/ai-elements/rich-text-input'
+import { RichTextInput, type RichTextInputHandle } from '@/components/ai-elements/rich-text-input'
 import { SpeechButton } from '@/components/ai-elements/speech-button'
 import { InputToolbarOverflow, type ToolbarItem } from '@/components/ai-elements/InputToolbarOverflow'
 import { Button } from '@/components/ui/button'
@@ -140,6 +140,7 @@ import { MAX_ATTACHMENT_SIZE } from '@profer/shared'
 import { fileToBase64, formatFileNames, getFileBaseName, getFileParentPath } from '@/lib/file-utils'
 import { createClipboardPendingFile, createClipboardTextDraft, makeUniqueAttachmentName } from '@/lib/clipboard-text-attachment'
 import { AgentMessageQueue } from './AgentMessageQueue'
+import { clearSessionReferenceDragState, getSessionReferenceDragData, canReferenceDraggedSession } from '@/lib/session-reference-drag'
 import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
 import {
   buildQueuedMessageSendPayload,
@@ -791,6 +792,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   const setQuotedSelectionMap = useSetAtom(quotedSelectionMapAtom)
   const openPreview = useOpenPreview()
   const currentAgentInterruption = useAtomValue(currentAgentInterruptionAtom)
+  const richTextInputRef = React.useRef<RichTextInputHandle>(null)
 
   /** 移除当前引用选中文本 */
   const handleRemoveQuotedSelection = React.useCallback(() => {
@@ -1687,6 +1689,17 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     e.preventDefault()
     e.stopPropagation()
     setIsDragOver(false)
+    clearSessionReferenceDragState()
+
+    const draggedSession = getSessionReferenceDragData(e.dataTransfer)
+    if (draggedSession) {
+      if (!canReferenceDraggedSession(draggedSession, sessionId)) {
+        toast.warning('不能引用当前会话')
+        return
+      }
+      richTextInputRef.current?.insertSessionMention(draggedSession)
+      return
+    }
 
     const droppedFiles = Array.from(e.dataTransfer.files)
     if (droppedFiles.length === 0) return
@@ -2747,8 +2760,12 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
 
   /** 分叉会话：从指定消息处创建新会话并自动切换 */
   const handleFork = React.useCallback(async (upToMessageUuid: string): Promise<void> => {
-    // 仅当 fork 时用户仍停留在源会话同一渠道时携带目标模型；跨渠道 fork 不指定模型，继承源会话模型。
-    const forkModelId = agentChannelId === sessionMetaChannelId ? agentModelId || undefined : undefined
+    // 只有用户明确在源会话渠道内切换了模型，才把目标模型传给后端校验。
+    // 当前会话渠道已被删除/停用时，Pi 仍可先完成 artifact 分叉，避免无关的模型选择
+    // 把本可创建的历史分支阻断；后续继续对话时再由发送路径提示渠道不可用。
+    const forkModelId = agentChannelId === sessionMetaChannelId && agentModelId !== sessionMetaModelId
+      ? agentModelId || undefined
+      : undefined
     try {
       const meta = await window.electronAPI.forkAgentSession({
         sessionId,
@@ -3221,6 +3238,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
               </div>
             )}
             <RichTextInput
+              ref={richTextInputRef}
               value={inputContent}
               onChange={setInputContent}
               onSubmit={handleSend}

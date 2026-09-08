@@ -1,5 +1,4 @@
 import * as React from 'react'
-import { useStore } from 'jotai'
 import { toast } from 'sonner'
 import { Copy, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -7,7 +6,7 @@ import { getFileBaseName, isAbsoluteFilePath as isAbsoluteFilePathCore, resolveR
 import { useTabletMode } from './tablet-mode-context'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { useOpenPreview } from '@/components/diff/preview-opener'
-import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import { useFileAccessSessionId } from './file-access-context'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { FileSearchCandidateResult } from '@profer/shared'
 
@@ -69,7 +68,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
   const tabletMode = useTabletMode()
   const filename = getFileBaseName(cleanPath)
   const isAbsolute = isAbsoluteFilePathCore(cleanPath)
-  const store = useStore()
+  const sessionId = useFileAccessSessionId()
   const openPreview = useOpenPreview()
   const [fileStatus, setFileStatus] = React.useState<'idle' | 'resolved' | 'pending' | 'broken'>('idle')
   const [candidates, setCandidates] = React.useState<string[]>([])
@@ -85,8 +84,8 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
     return basePath ? [basePath] : []
   }, [basePath, basePaths])
   const cacheKey = React.useMemo(
-    () => searchCacheKey(store.get(currentAgentSessionIdAtom) ?? undefined, cleanPath, candidateBases),
-    [candidateBases, cleanPath, store],
+    () => searchCacheKey(sessionId, cleanPath, candidateBases),
+    [candidateBases, cleanPath, sessionId],
   )
   const fallbackDisplayPath = isAbsolute ? cleanPath : resolveRelativeToAbsolute(cleanPath, candidateBases)
   const displayPath = stateCacheKey === cacheKey ? (selectedPath ?? fallbackDisplayPath) : fallbackDisplayPath
@@ -125,21 +124,16 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
   }, [cacheKey, candidates, selectedPath, stateCacheKey])
 
   const openPreviewPath = React.useCallback((path: string) => {
-    const sessionId = store.get(currentAgentSessionIdAtom)
-    if (!sessionId) {
-      void window.electronAPI.systemOpenFile(path)
-      return
-    }
+    if (!sessionId) return
     openPreview(sessionId, {
       filePath: path,
       previewOnly: true,
       basePaths: candidateBases.length > 0 ? candidateBases : undefined,
     })
-  }, [candidateBases, openPreview, store])
+  }, [candidateBases, openPreview, sessionId])
 
   const startSearch = React.useCallback(async (mode: 'simple' | 'deep', openOnFound: boolean): Promise<void> => {
     if (searching) return
-    const sessionId = store.get(currentAgentSessionIdAtom)
     if (!sessionId) {
       toast.error('当前没有可用的 Agent 会话')
       return
@@ -195,7 +189,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
         setSearching(false)
       }
     }
-  }, [candidates, cleanPath, filename, isAbsolute, openPreviewPath, searching, store])
+  }, [candidates, cleanPath, filename, isAbsolute, openPreviewPath, searching, sessionId])
 
   const cancelSearch = React.useCallback(() => {
     const requestId = requestIdRef.current

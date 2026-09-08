@@ -57,6 +57,15 @@ export function cleanPreviewTmpDir(): number {
 
 // ─── 路径解析 ───
 
+/** 展开当前用户的 shell 风格 home 缩写；不猜测 ~other-user。 */
+export function expandHomeDirectory(filePath: string): string {
+  if (filePath === '~') return homedir()
+  if (filePath.startsWith('~/') || filePath.startsWith('~\\')) {
+    return resolve(homedir(), ...filePath.slice(2).split(/[\\/]+/))
+  }
+  return filePath
+}
+
 /**
  * 在目录中递归搜索指定文件名
  */
@@ -193,8 +202,9 @@ function collectGlobalSearchDirs(): string[] {
  * 供 FilePathChip 批量预检使用，避免批量 IPC 触发多次同步全局目录遍历阻塞主进程。
  */
 export function resolveTargetPath(filePath: string, basePaths?: string[], opts?: { skipGlobalSearch?: boolean }): string {
-  if (filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath)) {
-    const direct = resolve(filePath)
+  const expandedPath = expandHomeDirectory(filePath)
+  if (expandedPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(expandedPath)) {
+    const direct = resolve(expandedPath)
     if (existsSync(direct)) return direct
     const name = basename(direct)
     if (!opts?.skipGlobalSearch) {
@@ -205,9 +215,9 @@ export function resolveTargetPath(filePath: string, basePaths?: string[], opts?:
           if (found) return found
         }
       }
-      const awIdx = filePath.indexOf('agent-workspaces')
+      const awIdx = expandedPath.indexOf('agent-workspaces')
       if (awIdx !== -1) {
-        const wsRoot = filePath.slice(0, awIdx + 'agent-workspaces'.length)
+        const wsRoot = expandedPath.slice(0, awIdx + 'agent-workspaces'.length)
         if (existsSync(wsRoot)) {
           const found = searchFileInDir(wsRoot, name)
           if (found) return found

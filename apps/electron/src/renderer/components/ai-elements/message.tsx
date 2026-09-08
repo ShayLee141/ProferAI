@@ -41,9 +41,8 @@ import { CodeBlock, MermaidBlock } from '@profer/ui'
 import { detectLanguage } from '@profer/core'
 import { FilePathChip, isAbsoluteFilePath, isRelativeFilePath } from './file-path-chip'
 import { useTabletMode } from './tablet-mode-context'
-import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import { useFileAccessSessionId } from './file-access-context'
 import { useOpenPreview } from '@/components/diff/preview-opener'
-import { useStore } from 'jotai'
 import type { HTMLAttributes, ComponentProps, ReactNode } from 'react'
 import type { FileAttachment } from '@profer/shared'
 
@@ -526,7 +525,7 @@ const MarkdownLink = React.memo(function MarkdownLink({
   ...linkProps
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>): React.ReactElement {
   const ctxBasePaths = React.useContext(BasePathsContext)
-  const store = useStore()
+  const sessionId = useFileAccessSessionId()
   const openPreview = useOpenPreview()
   const tabletMode = useTabletMode()
   const onWikilinkClick = React.useContext(WikilinkClickContext)
@@ -581,7 +580,6 @@ const MarkdownLink = React.memo(function MarkdownLink({
         if (filePathFromUrl) {
           // Markdown 的 [标题](file://...) 链接也走统一预览路径，避免跳到空白页面。
           // 主进程会用 sessionId 与 FileAccessOptions 保持既有安全校验。
-          const sessionId = store.get(currentAgentSessionIdAtom)
           if (sessionId) {
             openPreview(sessionId, {
               filePath: filePathFromUrl,
@@ -590,15 +588,16 @@ const MarkdownLink = React.memo(function MarkdownLink({
               readOnly: true,
               basePaths: ctxBasePaths,
             })
-          } else {
-            window.electronAPI.systemOpenFile(filePathFromUrl).catch(() => {})
           }
-        } else if (/^[A-Za-z]:[\\/]/.test(href)) {
-          // Windows 绝对路径
-          window.electronAPI.systemOpenFile(href).catch(() => {})
-        } else if (href.startsWith('/') || href.startsWith('.')) {
-          // Unix 绝对/相对路径
-          window.electronAPI.systemOpenFile(href).catch(() => {})
+        } else if (sessionId && (/^[A-Za-z]:[\\/]/.test(href) || href.startsWith('/') || href.startsWith('.'))) {
+          // 有来源会话时统一走受授权的预览入口；无来源会话 fail closed。
+          openPreview(sessionId, {
+            filePath: href,
+            dirPath: ctxBasePaths?.[0],
+            previewOnly: true,
+            readOnly: true,
+            basePaths: ctxBasePaths,
+          })
         }
       }}
       title={href}
@@ -721,6 +720,31 @@ export function rowsToMarkdown(rows: string[][]): string {
  * - Markdown：优先用 remarkTableSource 注入的精确源码（保留单元格内联格式），缺失时纯文本重建。
  * - TSV：始终从渲染后的单元格纯文本提取，粘贴到 Excel/WPS 最干净。
  */
+const MarkdownImage = React.memo(function MarkdownImage({ src, alt }: React.ImgHTMLAttributes<HTMLImageElement>): React.ReactElement {
+  const sessionId = useFileAccessSessionId()
+  const basePaths = React.useContext(BasePathsContext)
+  const [resolvedSrc, setResolvedSrc] = React.useState<string>()
+
+  React.useEffect(() => {
+    if (!src || !sessionId) return
+    const filePath = localFileUrlToPath(src) ?? src
+    if (/^(https?:|data:|blob:)/.test(src)) {
+      setResolvedSrc(src)
+      return
+    }
+    let active = true
+    window.electronAPI.resolveFilePath(filePath, {
+      sessionId,
+      candidateBasePaths: basePaths,
+    }).then((result) => {
+      if (active) setResolvedSrc(result?.url)
+    }).catch(() => {})
+    return () => { active = false }
+  }, [basePaths, sessionId, src])
+
+  return resolvedSrc ? <img src={resolvedSrc} alt={alt} /> : <span role="img" aria-label={alt} />
+})
+
 const MarkdownTable = React.memo(function MarkdownTable(
   props: { children?: React.ReactNode }
 ): React.ReactElement {
@@ -881,6 +905,7 @@ export const MessageResponse = React.memo(
     // 稳定引用的 components 对象，避免 react-markdown 每帧重建组件映射
     const components = React.useMemo(() => ({
       a: MarkdownLink,
+      img: MarkdownImage,
       pre: MarkdownPre,
       code: (props: React.HTMLAttributes<HTMLElement>) => (
         <MarkdownInlineCode {...props} basePath={basePath} basePaths={basePaths} />

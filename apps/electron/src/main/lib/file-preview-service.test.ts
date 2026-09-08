@@ -1,8 +1,8 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test'
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveFilePath } from './file-preview-service'
+import { expandHomeDirectory, resolveFilePath, resolveTargetPath } from './file-preview-service'
 
 /**
  * resolveTargetPath 预检模式（skipGlobalSearch）浅层搜索行为测试。
@@ -11,6 +11,20 @@ import { resolveFilePath } from './file-preview-service'
  * 但在 basePaths 内做浅层递归（深度 3），把工作区/授权目录子目录中的文件识别为「已存在」，
  * 避免裸文件名引用几乎全部落到「待查找」。本测试覆盖该浅层搜索的命中与边界。
  */
+describe('文件预览路径安全解析', () => {
+  test('Given 当前用户 home 缩写 When 解析路径 Then 只展开当前用户目录', () => {
+    expect(expandHomeDirectory('~')).toBe(homedir())
+    expect(expandHomeDirectory('~/Documents/a.md')).toBe(join(homedir(), 'Documents', 'a.md'))
+    expect(expandHomeDirectory('~other-user/a.md')).toBe('~other-user/a.md')
+  })
+
+  test('Given home 下存在文件 When 解析 ~ 路径 Then 返回展开后的文件路径', () => {
+    const home = homedir()
+    const target = join(home, '.profer-preview-test-do-not-create')
+    expect(resolveTargetPath('~/.profer-preview-test-do-not-create')).toBe(target)
+  })
+})
+
 describe('resolveTargetPath 预检浅层搜索（skipGlobalSearch）', () => {
   let tmpBase: string
 

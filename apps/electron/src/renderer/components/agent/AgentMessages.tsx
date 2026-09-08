@@ -15,6 +15,7 @@ import {
   MessageContent,
   BasePathsProvider,
 } from '@/components/ai-elements/message'
+import { FileAccessSessionProvider } from '@/components/ai-elements/file-access-context'
 import { TabletModeContext } from '@/components/ai-elements/tablet-mode-context'
 import {
   Conversation,
@@ -769,6 +770,7 @@ export function AgentMessages({ sessionId, sessionModelId, agentRuntime, message
 
   return (
     <TabletModeContext.Provider value={tabletMode}>
+    <FileAccessSessionProvider sessionId={sessionId}>
     <BasePathsProvider basePaths={[...(sessionPath ? [sessionPath] : []), ...(attachedDirs ?? [])]}>
     <div ref={historySelectionRootRef} className="relative flex min-h-0 flex-1 flex-col">
     <Conversation resize={ready && !transitioning ? 'smooth' : 'instant'} className={ready ? (skipFadeIn ? 'opacity-100' : 'opacity-100 transition-opacity duration-200') : 'opacity-0'}>
@@ -952,6 +954,7 @@ export function AgentMessages({ sessionId, sessionModelId, agentRuntime, message
       <AgentHistorySelectionLayer sessionId={sessionId} rootRef={historySelectionRootRef} />
     </div>
     </BasePathsProvider>
+    </FileAccessSessionProvider>
     </TabletModeContext.Provider>
   )
 }

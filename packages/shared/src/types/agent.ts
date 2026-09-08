@@ -738,6 +738,8 @@ export interface AgentSessionMeta {
   piSessionFile?: string
   /** Profer assistant UI UUID 到 Pi 树状 session entry ID 的持久映射。 */
   piEntryBindings?: Record<string, string>
+  /** Pi entry 对应的文件检查点（回退时恢复到该 turn 之前的工作区状态）。 */
+  piFileCheckpoints?: Record<string, string>
   /** 本会话使用的 Agent runtime；历史会话缺省时按 Claude 处理。 */
   agentRuntime?: AgentRuntime
   /** 兼容旧版本的本会话预设 ID；新数据同时保存 presetReference。 */

@@ -15,6 +15,7 @@ import {
   Pin, PinOff, Pencil, Trash2, MoreHorizontal, Clock, GitBranch, Globe, ChevronRight, Cloud, FolderOpen, GripVertical, Settings, ArrowRightLeft, Archive, ArchiveRestore, Plus, Mail,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { clearSessionReferenceDragState, setSessionReferenceDragData } from '@/lib/session-reference-drag'
 import { interfaceVariantAtom } from '@/atoms/theme'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
@@ -765,6 +766,17 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
           data-profer-navigation-item="session"
           data-profer-navigation-active={active ? 'true' : undefined}
           tabIndex={0}
+          draggable={!editing}
+          onDragStart={(event) => {
+            const target = event.target as HTMLElement
+            if (target.closest('button, input')) {
+              event.preventDefault()
+              clearSessionReferenceDragState()
+              return
+            }
+            setSessionReferenceDragData(event.dataTransfer, { sessionId: session.id, title: session.title })
+          }}
+          onDragEnd={clearSessionReferenceDragState}
           onClick={() => { if (preview.shouldSuppressClick()) return; onSelect(session.id, session.title) }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {

@@ -676,8 +676,9 @@ function isSystemSensitivePath(resolvedPath: string): boolean {
 }
 
 function isPathAllowed(filePath: string, options?: FileAccessOptions): boolean {
-  // deny-by-default：渲染进程不可信，未提供访问选项时拒绝越权访问
-  // 调用方必须显式传递 sessionId 或 workspaceSlug 来声明授权上下文
+  // deny-by-default：渲染进程不可信，未提供访问选项时拒绝越权访问。
+  // 调用方必须显式传递 sessionId 或 workspaceSlug 来声明授权上下文；即使有 sessionId，
+  // 也只能访问该上下文的显式授权根，不能把“普通文件”当成授权凭证。
   if (!options) {
     console.warn('[IPC] isPathAllowed 拒绝：未提供 FileAccessOptions')
     return false
@@ -694,19 +695,8 @@ function isPathAllowed(filePath: string, options?: FileAccessOptions): boolean {
     return true
   }
 
-  // 2. 宽松 fallback：有 sessionId 时，允许访问工作区外任意位置的常规文件
-  //    仅排除系统敏感目录（C:\Windows、/etc 等），防止误触系统文件
-  if (options.sessionId) {
-    try {
-      const st = statSync(resolved)
-      if (st.isFile() && !isSystemSensitivePath(resolved)) {
-        return true
-      }
-    } catch {
-      return false
-    }
-  }
-
+  // 不再提供“有 sessionId 就放行工作区外任意普通文件”的 fallback。
+  // sessionId 只用于解析会话/工作区的显式授权根；它本身不是任意本地路径的授权。
   return false
 }
 

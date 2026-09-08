@@ -105,6 +105,7 @@ import {
   rewindPiSession,
 } from './agent-session-manager'
 import { normalizeAgentEndReason } from './agent-end-reason'
+import { createPiFileCheckpoint } from './pi-file-checkpoint'
 import {
   getAgentWorkspace,
   getWorkspaceMcpConfig,
@@ -1760,6 +1761,12 @@ ${enrichedMessage}`
         (presetPolicy.preset.promptSections?.length ? `\n\n${presetPolicy.preset.promptSections.join('\n\n')}` : '') +
         (automationContext ? `\n\n## 定时任务执行上下文\n\n${automationContext}` : '')
       const piSystemPrompt = systemPromptAppend
+      // Pi 没有 Claude 的 file-history-snapshot；在每轮开始前保存工作区基线。
+      // 编排层在该轮落盘后把基线绑定到 assistant entry，回退时由 session manager 恢复。
+      const piCheckpointRoot = join(agentCwd, '.profer-pi-checkpoints')
+      const piTurnCheckpoint = agentRuntime === 'pi'
+        ? createPiFileCheckpoint(sessionId, agentCwd, piCheckpointRoot)
+        : undefined
       const queryOptions: AgentQueryInput & Record<string, unknown> = {
         sessionId,
         agentRuntime,
@@ -1922,11 +1929,16 @@ ${enrichedMessage}`
         // Pi 会话分叉/回退依赖 assistant UUID → Pi entry ID 映射；每轮落盘后合并增量映射。
         onPiEntryBindings: (bindings: Record<string, string>) => {
           const latest = getAgentSessionMeta(sessionId)
+          const checkpoints = { ...(latest?.piFileCheckpoints ?? {}) }
+          if (piTurnCheckpoint) {
+            for (const entryId of Object.values(bindings)) checkpoints[entryId] = piTurnCheckpoint.path
+          }
           updateAgentSessionMeta(sessionId, {
             piEntryBindings: {
               ...(latest?.piEntryBindings ?? {}),
               ...bindings,
             },
+            ...(piTurnCheckpoint ? { piFileCheckpoints: checkpoints } : {}),
           })
         },
         onRetry: (retry: PiRetryUpdate) => {
@@ -3169,12 +3181,6 @@ ${enrichedMessage}`
     if (normalizeAgentRuntime(sessionMeta.agentRuntime) === 'pi') {
       return rewindPiSession(sessionId, assistantMessageUuid, sessionMeta)
     }
-    // 当前 Claude rewind 依赖 Claude SDK JSONL/file-history snapshot；Pi session 格式不兼容，
-    // 禁止出现“UI 已回退而 Pi 原生上下文仍保留”的假成功。
-    if (normalizeAgentRuntime(sessionMeta.agentRuntime) !== 'claude') {
-      throw new Error('Pi runtime 当前不支持会话回退；请新建 Pi 会话继续工作。')
-    }
-
     // 0.5 从 SDK session JSONL 解析对应的 user message UUID（rewindFiles 需要）
     let projectDir: string | undefined
     let workspaceSlug: string | undefined

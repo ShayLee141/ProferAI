@@ -14,7 +14,7 @@
  * - 自动扩高
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useImperativeHandle, forwardRef } from 'react'
 import { useAtomValue } from 'jotai'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -23,6 +23,7 @@ import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Mention from '@tiptap/extension-mention'
+import { renderSessionMention, handleSessionMentionMouseDown, handleSessionMentionClick, handleSessionMentionKeyDown } from './session-mention'
 import { ChevronsDownUp, ChevronsUpDown } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -32,6 +33,8 @@ import { richTextRenderingEnabledAtom } from '@/atoms/ui-preferences'
 import { createFileMentionSuggestion } from '@/components/file-browser/file-mention-suggestion'
 import { createSkillMentionSuggestion, createMcpMentionSuggestion, createSessionMentionSuggestion } from '@/components/agent/mention-suggestions'
 import { shouldConvertClipboardTextToAttachment } from '@/lib/clipboard-text-attachment'
+type FilePanelDragItem = { path: string; name: string; isDirectory?: boolean }
+import { getSessionReferenceDragData, type SessionReferenceDragItem } from '@/lib/session-reference-drag'
 import {
   VOICE_DICTATION_INSERT_EVENT,
   getLastFocusedVoiceInputId,
@@ -168,13 +171,20 @@ interface RichTextInputProps {
   className?: string
 }
 
+/** RichTextInput 对外暴露的命令接口。 */
+export interface RichTextInputHandle {
+  getMarkdown: () => string
+  insertFileMentions: (items: FilePanelDragItem[]) => void
+  insertSessionMention: (item: SessionReferenceDragItem) => boolean
+}
+
 /**
  * 富文本输入组件
  * - 基于 TipTap 的 WYSIWYG 编辑器
  * - 支持 Markdown 快捷输入
  * - 无工具栏，纯净输入体验
  */
-export function RichTextInput({
+export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>(function RichTextInput({
   value,
   onChange,
   onSubmit,
@@ -198,7 +208,7 @@ export function RichTextInput({
   onHtmlChange,
   sendWithCmdEnter = false,
   tabletMode = false,
-}: RichTextInputProps): React.ReactElement {
+}: RichTextInputProps, ref: React.Ref<RichTextInputHandle>): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(false)
   const inputIdRef = useRef(`rich-text-input-${Math.random().toString(36).slice(2)}`)
   // 手动折叠状态：用户主动折叠输入框
@@ -336,6 +346,7 @@ export function RichTextInput({
           renderHTML({ node, suggestion }) {
             const char = suggestion?.char ?? node.attrs.mentionSuggestionChar ?? '@'
             const label = node.attrs.label ?? node.attrs.id
+            if (char === '&') return renderSessionMention(node.attrs.id, label)
             let chipClass = 'mention-chip'
             if (char === '/') chipClass = 'skill-mention-chip'
             else if (char === '#') chipClass = 'mcp-mention-chip'
@@ -348,6 +359,7 @@ export function RichTextInput({
                 'data-label': node.attrs.label,
                 'data-mention-suggestion-char': char,
                 class: chipClass,
+                'data-session-reference': char === '&' ? 'true' : undefined,
               },
               `${char === '@' ? '@' : ''}${label}`,
             ]
@@ -366,6 +378,14 @@ export function RichTextInput({
     content: richTextEnabled ? markdownToHtml(value) : plainTextToEditorHtml(value),
     editable: !disabled,
     editorProps: {
+      // 自定义拖拽载荷由 Agent 外层处理，避免 text/plain 兜底内容被 ProseMirror 当成普通文本插入。
+      handleDrop: (_view, event) => {
+        if (event.dataTransfer && getSessionReferenceDragData(event.dataTransfer)) {
+          event.preventDefault()
+          return true
+        }
+        return false
+      },
       attributes: {
         // tabindex=0 让空间导航把编辑器视为可达目标（[tabindex]:not([tabindex="-1"])），
         // 从而左栏/右栏的箭头可以进入输入区；裸的 contenteditable 因无 tabindex 无法被聚焦。
@@ -383,6 +403,9 @@ export function RichTextInput({
       },
       // 监听 IME 输入状态
       handleDOMEvents: {
+        mousedown: handleSessionMentionMouseDown,
+        click: handleSessionMentionClick,
+        keydown: handleSessionMentionKeyDown,
         focus: () => {
           setLastFocusedVoiceInputId(inputIdRef.current)
           return false
@@ -742,6 +765,23 @@ export function RichTextInput({
   // 是否显示折叠按钮：启用 collapsible 且内容已自动扩展
   const showCollapseToggle = collapsible && isExpanded
 
+  useImperativeHandle(ref, () => ({
+    getMarkdown: () => htmlToMarkdown(editor?.getHTML() ?? ''),
+    insertFileMentions: (items) => {
+      if (!editor || items.length === 0) return
+      let chain = editor.chain().focus()
+      for (const item of items) {
+        chain = chain.insertContent({ type: 'mention', attrs: { id: item.path, label: item.name, mentionSuggestionChar: '@', isDirectory: item.isDirectory ?? false } }).insertContent(' ')
+      }
+      chain.run()
+    },
+    insertSessionMention: (item) => {
+      if (!editor || !editor.isEditable) return false
+      editor.chain().focus().insertContent({ type: 'mention', attrs: { id: item.sessionId, label: item.title, mentionSuggestionChar: '&' } }).insertContent(' ').run()
+      return true
+    },
+  }), [editor])
+
   return (
     <div
       className={cn(
@@ -877,31 +917,83 @@ export function RichTextInput({
           mask-repeat: no-repeat;
           flex-shrink: 0;
         }
+        /* 会话引用：Profer 风格的上下文胶囊。使用语义 token，确保深浅色和自定义主题一致。 */
         .session-mention-chip {
-          background-color: hsl(200 80% 50% / 0.14);
-          color: hsl(200 80% 40%);
-          border-radius: 4px;
-          padding: 1px 4px 1px 2px;
-          font-size: 13px;
-          font-weight: 500;
-          white-space: nowrap;
+          position: relative;
           display: inline-flex;
           align-items: center;
-          gap: 2px;
-          vertical-align: baseline;
+          gap: 5px;
+          max-width: min(19rem, 70%);
+          margin: 0 2px;
+          padding: 3px 9px 3px 7px;
+          overflow: hidden;
+          vertical-align: -0.16em;
+          white-space: nowrap;
+          border: 1px solid hsl(var(--primary) / 0.18);
+          border-radius: 7px;
+          background: linear-gradient(180deg, hsl(var(--primary) / 0.13), hsl(var(--primary) / 0.08));
+          box-shadow: inset 0 1px 0 hsl(var(--background) / 0.35), 0 1px 2px hsl(var(--foreground) / 0.06);
+          color: hsl(var(--primary));
+          font-size: 13px;
+          font-weight: 550;
+          line-height: 1.35;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+          user-select: none;
+          transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+        }
+        .session-mention-label {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .session-mention-remove {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 20px;
+          height: 20px;
+          flex: 0 0 20px;
+          margin: -2px -5px -2px 0;
+          padding: 0;
+          border: 0;
+          border-radius: 4px;
+          color: inherit;
+          background: transparent;
+          font-size: 15px;
+          font-weight: 500;
+          line-height: 1;
+          opacity: 0.65;
+          cursor: pointer;
+        }
+        .session-mention-remove:hover,
+        .session-mention-remove:focus-visible {
+          background: hsl(var(--primary) / 0.16);
+          opacity: 1;
+        }
+        .session-mention-remove:focus-visible {
+          outline: 2px solid currentColor;
+          outline-offset: -2px;
+        }
+        .session-mention-chip:hover {
+          border-color: hsl(var(--primary) / 0.34);
+          background: linear-gradient(180deg, hsl(var(--primary) / 0.18), hsl(var(--primary) / 0.11));
+          box-shadow: inset 0 1px 0 hsl(var(--background) / 0.4), 0 2px 5px hsl(var(--foreground) / 0.08);
         }
         .session-mention-chip::before {
           content: '';
           display: inline-block;
-          width: 12px;
-          height: 12px;
+          width: 15px;
+          height: 15px;
+          flex: 0 0 15px;
           background-color: currentColor;
           mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3Cpath d='M8 9h8'/%3E%3Cpath d='M8 13h6'/%3E%3C/svg%3E");
-          mask-size: contain;
+          mask-position: center;
+          mask-size: 15px 15px;
           mask-repeat: no-repeat;
-          flex-shrink: 0;
+          opacity: 0.9;
         }
       `}</style>
     </div>
   )
-}
+})

@@ -29,6 +29,7 @@ import { listAgentPresets, normalizeSessionPresetId, presetReferenceForId } from
 import { copySettledPiHarnessEventsForFork } from './pi-harness/pi-harness-store'
 import { forkPiSessionArtifact } from './pi-session-fork'
 import { isEphemeralTransportError } from './error-patterns'
+import { loadPiFileCheckpoint, restorePiFileCheckpoint } from './pi-file-checkpoint'
 
 // 在模块加载时一次性设置 SDK 配置目录，避免在 forkSession 等异步调用中临时修改/恢复
 // process.env 导致的并发安全问题（异步操作的 await 间隙其他代码可能读到错误值）。
@@ -766,7 +767,7 @@ function convertLegacyMessage(legacy: AgentMessage): SDKMessage {
  */
 export function updateAgentSessionMeta(
   id: string,
-  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'modelId' | 'sdkSessionId' | 'piSessionFile' | 'piEntryBindings' | 'agentRuntime' | 'codexFastMode' | 'openAIThinkingLevel' | 'workspaceId' | 'pinned' | 'archived' | 'draft' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'autoQueueSendEnabled' | 'permissionMode' | 'completedButUnconfirmed' | 'sourceAutomationId' | 'automationGraduated' | 'parentSessionId' | 'rootSessionId' | 'sourceDelegationId' | 'delegationRole' | 'delegationStatus' | 'delegationDepth' | 'delegationGoal' | 'lastAnalyzedTurn' | 'presetId' | 'pptCapabilityActive' | 'lastInterruptReason' | 'lastInterruptLabel' | 'lastInterruptAt' | 'presetReference'>>,
+  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'modelId' | 'sdkSessionId' | 'piSessionFile' | 'piEntryBindings' | 'piFileCheckpoints' | 'agentRuntime' | 'codexFastMode' | 'openAIThinkingLevel' | 'workspaceId' | 'pinned' | 'archived' | 'draft' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'autoQueueSendEnabled' | 'permissionMode' | 'completedButUnconfirmed' | 'sourceAutomationId' | 'automationGraduated' | 'parentSessionId' | 'rootSessionId' | 'sourceDelegationId' | 'delegationRole' | 'delegationStatus' | 'delegationDepth' | 'delegationGoal' | 'lastAnalyzedTurn' | 'presetId' | 'pptCapabilityActive' | 'lastInterruptReason' | 'lastInterruptLabel' | 'lastInterruptAt' | 'presetReference'>>,
 ): AgentSessionMeta {
   const index = readIndex()
   const idx = index.sessions.findIndex((s) => s.id === id)
@@ -1156,6 +1157,8 @@ async function forkPiAgentSession(sourceMeta: AgentSessionMeta, input: ForkSessi
     throw new Error('未找到 Pi session artifact，无法安全分叉')
   }
 
+  // 未显式换模型时继承源会话模型；即使源渠道后来被删除/停用，也允许复制
+  // 已存在的 Pi artifact。只有用户主动选择新模型时才需要重新校验渠道能力。
   const forkModelId = input.modelId !== undefined
     ? assertEnabledModelForChannel({ channelId: sourceMeta.channelId, modelId: input.modelId, purpose: '分叉 Pi Agent 会话' })
     : sourceMeta.modelId
@@ -1331,10 +1334,33 @@ export async function rewindPiSession(
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
       .map((entry) => JSON.stringify(entry))
       .join('\n') + '\n'
-  writeFileSync(piSessionFile, newContent, 'utf-8')
+  // 先写临时文件再原子替换，避免回退过程中进程退出留下半截 Pi transcript。
+  const tempSessionFile = `${piSessionFile}.rewind-${process.pid}-${Date.now()}.tmp`
+  try {
+    writeFileSync(tempSessionFile, newContent, 'utf-8')
+    renameSync(tempSessionFile, piSessionFile)
+  } finally {
+    if (existsSync(tempSessionFile)) unlinkSync(tempSessionFile)
+  }
   console.log(`[Agent 会话] Pi session 已截断: sessionId=${sessionId}, 保留 ${keptEntries.length} 条 entry (entry=${entryId})`)
 
-  // 3. 截断 Profer 展示 JSONL（与 Pi 文件保持一致）
+  // 3. 恢复该 Pi turn 开始前的工作区文件状态。检查点覆盖 Pi 原生工具、Bash
+  //    以及其他通过当前 cwd 落盘的修改；旧会话没有检查点时明确降级。
+  let fileRewind: RewindSessionResult['fileRewind']
+  const checkpointPath = sessionMeta.piFileCheckpoints?.[entryId]
+  try {
+    const workspace = sessionMeta.workspaceId ? getAgentWorkspace(sessionMeta.workspaceId) : undefined
+    const cwd = workspace ? getAgentSessionWorkspacePath(workspace.slug, sessionId) : process.cwd()
+    if (!checkpointPath) throw new Error('该 Pi turn 没有文件检查点（旧会话或检查点创建失败）')
+    const filesChanged = restorePiFileCheckpoint(loadPiFileCheckpoint(checkpointPath), cwd)
+    fileRewind = { canRewind: true, filesChanged }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[Agent 会话] Pi 文件恢复失败，继续回退对话: ${message}`)
+    fileRewind = { canRewind: false, error: message }
+  }
+
+  // 4. 截断 Profer 展示 JSONL（与 Pi 文件保持一致）
   const kept = truncateSDKMessages(sessionId, cutMessageUuid)
 
   // 4. 清理 piEntryBindings：删除已截断 entry 的映射，避免残留脏映射；
@@ -1343,14 +1369,18 @@ export async function rewindPiSession(
   const keptBindings = Object.fromEntries(
     Object.entries(bindings).filter(([, mappedEntryId]) => keptEntryIds.has(mappedEntryId)),
   )
+  const keptCheckpoints = Object.fromEntries(
+    Object.entries(sessionMeta.piFileCheckpoints ?? {}).filter(([mappedEntryId]) => keptEntryIds.has(mappedEntryId)),
+  )
   updateAgentSessionMeta(sessionId, {
     piEntryBindings: keptBindings,
+    piFileCheckpoints: keptCheckpoints,
     resumeAtMessageUuid: undefined,
   })
 
   return {
     remainingMessages: kept.length,
-    fileRewind: { canRewind: false, error: 'Pi 会话不支持文件快照恢复，仅截断对话' },
+    fileRewind,
   }
 }
 
