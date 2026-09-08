@@ -93,6 +93,15 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
     : availablePresets.find((preset) => preset.id === persistedPresetId)
   const presetsLoaded = loadedPresetCaches.has(agentPresetCacheKey(workspaceSlug))
   const presetRequired = presetsLoaded && availablePresets.length > 0 && !current
+  const [showPresetRequired, setShowPresetRequired] = React.useState(false)
+  React.useEffect(() => {
+    if (!presetRequired) {
+      setShowPresetRequired(false)
+      return
+    }
+    const timer = window.setTimeout(() => setShowPresetRequired(true), 500)
+    return () => window.clearTimeout(timer)
+  }, [presetRequired])
 
   const closeMenu = React.useCallback(() => {
     setInternalOpen(false)
@@ -147,14 +156,14 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
                 variant="ghost"
                 size="icon"
                 aria-label={`预设：${current?.name ?? '标准'}`}
-                className={cn('size-[36px] rounded-full hover:text-foreground', presetRequired ? 'text-amber-600 dark:text-amber-400' : 'text-foreground/60')}
+                className={cn('size-[36px] rounded-full hover:text-foreground', showPresetRequired ? 'text-amber-600 dark:text-amber-400' : 'text-foreground/60')}
               >
-                {presetRequired ? <AlertTriangle className="size-5" /> : <BriefcaseBusiness className="size-5" />}
+                {showPresetRequired ? <AlertTriangle className="size-5" /> : <BriefcaseBusiness className="size-5" />}
               </Button>
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="max-w-[220px]">
-            <p className="font-medium">{presetRequired ? '请先选择 Agent 预设' : `预设 · ${current?.name ?? '未知'}`}</p>
+            <p className="font-medium">{showPresetRequired ? '请先选择 Agent 预设' : `预设 · ${current?.name ?? '未知'}`}</p>
           </TooltipContent>
         </Tooltip>
         <PopoverContent align="start" side="top" className="w-72 p-1.5">

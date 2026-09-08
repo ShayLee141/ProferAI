@@ -987,6 +987,15 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     return scope === sessionPresetReference.presetScope
   }))
   const presetSelectionRequired = Boolean(sessionMeta && presetsLoaded && workspacePresetList.length > 0 && !hasUsableSessionPreset)
+  const [showPresetSelectionRequired, setShowPresetSelectionRequired] = React.useState(false)
+  React.useEffect(() => {
+    if (!presetSelectionRequired) {
+      setShowPresetSelectionRequired(false)
+      return
+    }
+    const timer = window.setTimeout(() => setShowPresetSelectionRequired(true), 500)
+    return () => window.clearTimeout(timer)
+  }, [presetSelectionRequired])
   // 旧会话或异常入口没有有效绑定时，自动采用当前工作区列表中的首个可用预设，避免把内部修复问题暴露给用户。
   React.useEffect(() => {
     if (!sessionMeta || !presetsLoaded || hasUsableSessionPreset) return
@@ -3198,7 +3207,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
               </div>
             )}
 
-            {presetSelectionRequired && (
+            {showPresetSelectionRequired && (
               <div className="mx-3 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                 当前会话尚未选择可用的 Agent 预设，请先点击工具栏的{' '}
                 <button
@@ -3222,7 +3231,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
                 // 平板触屏：输入框保持干净，不显示占位提示文字
                 tabletMode
                   ? ''
-                  : presetSelectionRequired
+                  : showPresetSelectionRequired
                     ? '请先选择 Agent 预设，然后再开始对话'
                     : isCompacting
                     ? '正在压缩上下文，完成后可继续对话...'
