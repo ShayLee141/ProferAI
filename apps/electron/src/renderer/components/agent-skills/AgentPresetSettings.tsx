@@ -464,8 +464,13 @@ export function AgentPresetSettings({
     });
     setCreating(true);
   }, []);
+  // 挂载时以当前计数为基线，避免切回选项卡时重放历史请求。
+  const previousCreateRequest = React.useRef(createRequestToken);
   React.useEffect(() => {
-    if (createRequestToken > 0) openCreate();
+    if (createRequestToken > previousCreateRequest.current) {
+      previousCreateRequest.current = createRequestToken;
+      openCreate();
+    }
   }, [createRequestToken, openCreate]);
 
   const openEdit = React.useCallback((preset: AgentPreset) => {
@@ -912,7 +917,7 @@ export function AgentPresetSettings({
     }
   }, [workspaceSlug, reload, bumpCapabilities]);
 
-  const previousImportFileRequest = React.useRef(0);
+  const previousImportFileRequest = React.useRef(importFileRequestToken);
   React.useEffect(() => {
     if (importFileRequestToken > previousImportFileRequest.current) {
       previousImportFileRequest.current = importFileRequestToken;
@@ -920,7 +925,7 @@ export function AgentPresetSettings({
     }
   }, [handleImport, importFileRequestToken]);
 
-  const previousExportRequest = React.useRef(0);
+  const previousExportRequest = React.useRef(exportRequestToken);
   React.useEffect(() => {
     if (exportRequestToken > previousExportRequest.current) {
       previousExportRequest.current = exportRequestToken;
@@ -1306,23 +1311,28 @@ export function AgentPresetSettings({
           }
         }}
       >
-        <DialogContent className="max-h-[85vh] overflow-y-auto scrollbar-thin sm:max-w-[680px]">
-          <DialogHeader>
-            <DialogTitle>{formTitle}</DialogTitle>
-            <DialogDescription>
-              提示词段之间用空行分隔。Skill / MCP 白名单在下方勾选；留空 =
-              不注入任何项，需全部可用时请点「全选」。
+        <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-[920px]">
+          <DialogHeader className="shrink-0 border-b bg-muted/20 px-6 py-4 sm:px-8">
+            <DialogTitle className="pr-8 text-lg tracking-tight">{formTitle}</DialogTitle>
+            <DialogDescription className="sr-only">
+              配置预设的岗位信息、运行策略与工具权限。
             </DialogDescription>
             {globalMode && editing && (
               <GlobalPresetScopePanel preset={editing} />
             )}
           </DialogHeader>
           {!(globalMode && editing?.scope === "builtin-meta") && (
-            <div className="flex flex-col gap-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-foreground/70">
-                    名称 *
+            <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin px-6 py-5 sm:px-8">
+              <div className="mb-5 flex items-center gap-2">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">基础信息</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+              <div className="flex flex-col gap-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-foreground/80">
+                    名称 <span className="text-primary">*</span>
                   </label>
                   <Input
                     value={form.name}
@@ -1332,8 +1342,8 @@ export function AgentPresetSettings({
                     placeholder="如：研究模式"
                   />
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-foreground/70">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-foreground/80">
                     描述
                   </label>
                   <Input
@@ -1345,10 +1355,16 @@ export function AgentPresetSettings({
                   />
                 </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-foreground/70">
-                  派生基座（可选）
-                </label>
+              <div className="rounded-xl border bg-muted/15 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <label className="text-sm font-semibold text-foreground/90">
+                      派生基座
+                    </label>
+                    <p className="mt-0.5 text-xs text-muted-foreground">可选：继承内置预设，减少重复配置</p>
+                  </div>
+                  <span className="rounded-full bg-background px-2 py-1 text-[10px] font-medium text-muted-foreground ring-1 ring-border">进阶</span>
+                </div>
                 <Select
                   value={form.basePresetId || SELECT_DEFAULT_VALUE}
                   onValueChange={(v) =>
@@ -1370,24 +1386,33 @@ export function AgentPresetSettings({
                     <SelectItem value="minimal">基于「极简」</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-[10px] text-muted-foreground">
-                  派生预设只存储与基座的差异：内置预设升级（提示词段/能力裁剪调整）会自动跟随；表格中的字段仍可覆盖或追加。
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  只存储与基座的差异，内置预设升级后会自动跟随；下方字段仍可覆盖或追加。
                 </p>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-foreground/70">
-                  提示词段（追加到系统提示词）
-                </label>
+              <div className="rounded-xl border bg-muted/15 p-4">
+                <div className="mb-3">
+                  <label className="text-sm font-semibold text-foreground/90">
+                    行为指令
+                  </label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">追加到系统提示词，段落之间用空行分隔</p>
+                </div>
                 <Textarea
                   value={form.promptText}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, promptText: e.target.value }))
                   }
                   placeholder={"## 研究模式\n\n本会话专注调研，只读不写……"}
-                  rows={5}
+                  rows={6}
+                  className="min-h-32 resize-y bg-background/70 text-sm leading-6"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border bg-muted/15 p-4">
+                <div className="mb-3">
+                  <p className="text-sm font-semibold text-foreground/90">运行策略</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">控制思考深度与操作授权方式</p>
+                </div>
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-foreground/70">
                     推理强度
@@ -1444,10 +1469,16 @@ export function AgentPresetSettings({
                   </Select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-foreground/70">
-                    Skill 白名单（留空 = 全部禁用）
+              </div>
+              <div className="rounded-xl border bg-muted/15 p-4">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-foreground/90">连接能力</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">选择这个预设可以调用的 Skill 与 MCP 服务</p>
+                </div>
+              <div className="grid gap-5 lg:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-foreground/80">
+                    Skill 白名单
                   </label>
                   <PickList
                     items={skillItems}
@@ -1468,9 +1499,9 @@ export function AgentPresetSettings({
                     onClear={() => setForm((f) => ({ ...f, skillSlugs: "" }))}
                   />
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-foreground/70">
-                    MCP 白名单（留空 = 全部禁用）
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-foreground/80">
+                    MCP 白名单
                   </label>
                   <PickList
                     items={mcpItems}
@@ -1493,13 +1524,17 @@ export function AgentPresetSettings({
                   />
                 </div>
               </div>
-              <p className="text-[10px] text-muted-foreground">
-                白名单按名尽力匹配：留空时不会注入任何 Skill 或
-                MCP；需要完整能力请点各列表的「全选」。预设里选了但工作区没有的项会自动忽略；标注「未启用」的项需先在
-                Skills/MCP 页启用。
+              </div>
+              <p className="px-1 text-xs leading-5 text-muted-foreground">
+                留空表示不注入任何项；点击「全选」即可启用当前工作区的完整列表。未启用的项需要先在对应设置页开启。
               </p>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-foreground/70">
+              <div className="rounded-xl border bg-muted/15 p-4">
+                <div className="mb-3">
+                  <p className="text-sm font-semibold text-foreground/90">访问边界</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">按需收窄工具和子 Agent 权限，打造更专注的工作模式</p>
+                </div>
+              <div className="flex flex-col gap-4">
+                <label className="text-xs font-semibold text-foreground/80">
                   子 Agent 委派
                 </label>
                 <Select
@@ -1524,10 +1559,10 @@ export function AgentPresetSettings({
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-foreground/70">
-                  精简能力（禁用产品内置工具组 / 单个工具）
+                <label className="text-xs font-semibold text-foreground/80">
+                  精简能力
                 </label>
-                <div className="flex flex-col gap-2 rounded-md border p-3">
+                <div className="flex flex-col gap-3 rounded-lg border bg-background/50 p-4">
                   {TOOL_GROUP_OPTIONS.map((group) => {
                     const groupDisabled = form.disabledToolGroups.includes(
                       group.value,
@@ -1604,7 +1639,9 @@ export function AgentPresetSettings({
                   = 完整能力。
                 </p>
               </div>
-              {error && <p className="text-xs text-destructive">{error}</p>}
+              </div>
+              {error && <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p>}
+            </div>
             </div>
           )}
           {globalMode && editing?.scope === "builtin-meta" && (
@@ -1613,9 +1650,11 @@ export function AgentPresetSettings({
             </p>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 gap-2 border-t bg-background px-6 py-3 sm:items-center sm:gap-0 sm:px-8">
+            <p className="mr-auto hidden text-xs text-muted-foreground sm:block">保存后将在下一轮会话中生效</p>
             <Button
-              variant="outline"
+              variant="ghost"
+              className="h-9 rounded-lg px-4 text-sm"
               onClick={() => {
                 setCreating(false);
                 setEditing(null);
@@ -1625,8 +1664,12 @@ export function AgentPresetSettings({
               取消
             </Button>
             {!(globalMode && editing?.scope === "builtin-meta") && (
-              <Button onClick={handleSave} disabled={saving}>
-                {saving ? "保存中…" : "保存"}
+              <Button
+                onClick={handleSave}
+                disabled={saving}
+                className="h-9 rounded-lg px-5 text-sm shadow-sm"
+              >
+                {saving ? "保存中…" : "保存预设"}
               </Button>
             )}
           </DialogFooter>
