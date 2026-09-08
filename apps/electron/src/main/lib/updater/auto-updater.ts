@@ -14,7 +14,7 @@ import { getUpdateSources, type UpdateSource } from './update-sources'
 import { canReplaceUpdateStatus } from './update-state'
 
 /** 当前更新状态 */
-let currentStatus: UpdateStatus = { status: 'idle' }
+let currentStatus: UpdateStatus = { status: app.isPackaged ? 'idle' : 'disabled' }
 
 /** 主窗口引用 */
 let win: BrowserWindow | null = null
@@ -85,7 +85,7 @@ export async function checkForUpdates(): Promise<void> {
   // 开发模式不检查更新（electron-updater 的 feed URL 仅在打包后嵌入）
   if (!app.isPackaged) {
     console.log('[更新] 开发模式，跳过更新检查')
-    setStatus({ status: 'not-available' })
+    setStatus({ status: 'disabled' })
     return
   }
 

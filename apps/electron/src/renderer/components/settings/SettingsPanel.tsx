@@ -193,11 +193,23 @@ export function SettingsPanel({
   const [pendingAction, setPendingAction] = React.useState<PendingAction>(null)
   const showNavDialog = pendingAction !== null
 
+  /** 完成导航（仅在无需确认或用户明确放弃后调用）。 */
+  const navigateToTab = (tabId: SettingsTab): void => {
+    if (tabId === 'tutorial') {
+      const result = openTab(mainTabs, { type: 'tutorial', sessionId: TUTORIAL_TAB_ID, title: 'Profer 使用教程' })
+      setMainTabs(result.tabs)
+      setMainActiveTabId(result.activeTabId)
+      setSettingsOpen(false)
+      return
+    }
+    setActiveTab(tabId)
+  }
+
   /** 执行待处理的操作 */
   const executePendingAction = (): void => {
     if (!pendingAction) return
     if (pendingAction.type === 'tab') {
-      setActiveTab(pendingAction.tabId)
+      navigateToTab(pendingAction.tabId)
     } else {
       onClose?.()
     }
@@ -246,24 +258,16 @@ export function SettingsPanel({
   // 统一回落：activeTab 不在当前可见列表（平板白名单 / 未登录过滤）时回落到首项，
   // 避免渲染未暴露的设置页（如登录/订阅/团队管理）。
   // tabs 为空数组（tabsOverride 传空）时整体不渲染，避免解引用崩溃。
-  if (tabs.length === 0) return <div className="flex flex-col h-full items-center justify-center text-sm text-muted-foreground">没有可用的设置项</div>
-  const effectiveTab: SettingsTab = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]!.id
+  const effectiveTab: SettingsTab = tabs.some((t) => t.id === activeTab) ? activeTab : (tabs[0]?.id ?? 'general')
 
   /** 切换标签页时检测是否有未保存内容，tutorial 特殊处理：打开 New Tab 并关闭设置 */
   const handleTabChange = (tabId: SettingsTab): void => {
-    if (tabId === 'tutorial') {
-      const result = openTab(mainTabs, { type: 'tutorial', sessionId: TUTORIAL_TAB_ID, title: 'Profer 使用教程' })
-      setMainTabs(result.tabs)
-      setMainActiveTabId(result.activeTabId)
-      setSettingsOpen(false)
-      return
-    }
     if (tabId === effectiveTab) return
     if (effectiveTab === 'channels' && channelFormDirty) {
       setPendingAction({ type: 'tab', tabId })
       return
     }
-    setActiveTab(tabId)
+    navigateToTab(tabId)
   }
 
   /** 关闭设置面板时检测是否有未保存内容 */
@@ -277,11 +281,17 @@ export function SettingsPanel({
 
   // Cmd+W 等外部关闭请求：弹出确认对话框
   React.useEffect(() => {
-    if (closeRequested && effectiveTab === 'channels') {
+    if (!closeRequested) return
+    setCloseRequested(false)
+    if (channelFormDirty) {
       setPendingAction({ type: 'close' })
-      setCloseRequested(false)
+    } else {
+      onClose?.()
     }
-  }, [closeRequested, effectiveTab, setCloseRequested])
+  }, [closeRequested, channelFormDirty, setCloseRequested, onClose])
+
+  // 保持所有 Hook 在空列表回落之前执行。
+  if (tabs.length === 0) return <div className="flex flex-col h-full items-center justify-center text-sm text-muted-foreground">没有可用的设置项</div>
 
   // 当前 tab 标题
   const activeTabLabel = tabs.find((t) => t.id === effectiveTab)?.label ?? "设置";

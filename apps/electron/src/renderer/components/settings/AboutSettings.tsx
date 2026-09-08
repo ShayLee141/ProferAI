@@ -52,9 +52,6 @@ function UpdateCard(): React.ReactElement | null {
   const [showReleaseNotes, setShowReleaseNotes] = React.useState(false)
   const [latestNotes, setLatestNotes] = React.useState<string | null>(null)
 
-  // updater 不可用时不渲染
-  if (!available) return null
-
   const handleCheck = async (): Promise<void> => {
     setChecking(true)
     try {
@@ -87,6 +84,9 @@ function UpdateCard(): React.ReactElement | null {
     }
   }, [status.status, status.version, latestNotes])
 
+  // updater 不可用时不渲染；所有 Hook 保持固定调用顺序。
+  if (!available) return null
+
   const isChecking = checking || status.status === 'checking' || status.status === 'downloading'
   const hasReleaseNotes = status.releaseNotes || latestNotes
 
@@ -109,7 +109,7 @@ function UpdateCard(): React.ReactElement | null {
           ) : (
             <button
               onClick={handleCheck}
-              disabled={isChecking}
+              disabled={isChecking || status.status === 'disabled'}
               className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 transition-colors disabled:opacity-50"
             >
               {isChecking ? (
@@ -166,6 +166,8 @@ function StatusText({ status, version, error }: {
   error?: string
 }): React.ReactElement {
   switch (status) {
+    case 'disabled':
+      return <span className="text-xs text-muted-foreground">开发模式不检查更新，请使用安装包验证</span>
     case 'checking':
       return <span className="text-xs text-muted-foreground">正在检查...</span>
     case 'available':

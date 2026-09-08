@@ -840,6 +840,13 @@ async function bootstrap(): Promise<void> {
 
   // 应用开机自启动设置：确保与实际系统状态同步
   safeRun('applyAutoLaunch', () => {
+    // macOS 登录项以系统为准，避免启动时重新启用用户在系统设置中关闭的项。
+    if (process.platform === 'darwin') {
+      const enabled = app.getLoginItemSettings().openAtLogin
+      updateSettings({ autoLaunch: enabled })
+      console.log(`[启动] 同步 macOS 登录项状态: ${enabled ? '已开启' : '已关闭'}`)
+      return
+    }
     const settings = getSettings()
     const enabled = settings.autoLaunch === true
     app.setLoginItemSettings({ openAtLogin: enabled })

@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react'
-import { useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { ExternalLink, Loader2, TestTube2, Mic, MicOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,8 @@ import {
 } from './primitives'
 import type { VoiceDictationSettings, MicPermissionResult } from '../../../types'
 import { voiceDictationSettingsAtom } from '@/atoms/voice-dictation-atoms'
+import { shortcutOverridesAtom } from '@/atoms/shortcut-atoms'
+import { getAcceleratorDisplay, getActiveAccelerator } from '@/lib/shortcut-registry'
 
 const ENDPOINT_OPTIONS = [
   { value: 'async', label: '双向流式优化版' },
@@ -43,6 +45,12 @@ const VOLCENGINE_SPEECH_SERVICE_URL = 'https://console.volcengine.com/speech/ser
 
 export function VoiceInputSettings(): React.ReactElement {
   const [settings, setSettings] = React.useState<VoiceDictationSettings | null>(null)
+  const shortcutOverrides = useAtomValue(shortcutOverridesAtom)
+  const voiceShortcut = React.useMemo(
+    () => getActiveAccelerator('voice-dictation'),
+    [shortcutOverrides],
+  )
+  const voiceShortcutDisplay = getAcceleratorDisplay(voiceShortcut) || '快捷键已禁用'
   const setVoiceDictationSettings = useSetAtom(voiceDictationSettingsAtom)
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
@@ -226,7 +234,7 @@ export function VoiceInputSettings(): React.ReactElement {
         <SettingsCard>
           <SettingsToggle
             label="启用语音输入"
-            description="启用后显示输入工具栏的麦克风按钮，也可使用 Ctrl+～ 打开语音输入浮窗，再按一次停止。"
+            description={`启用后显示输入工具栏的麦克风按钮，也可使用 ${voiceShortcutDisplay} 打开语音输入浮窗，再按一次停止；可在快捷键管理中修改。`}
             checked={settings.enabled}
             onCheckedChange={(enabled) => update({ enabled })}
           />

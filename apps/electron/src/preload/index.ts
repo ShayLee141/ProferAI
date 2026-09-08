@@ -1134,14 +1134,14 @@ export interface ElectronAPI {
   updater?: {
     checkForUpdates: () => Promise<void>
     getStatus: () => Promise<{
-      status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error'
+      status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'disabled' | 'error'
       version?: string
       releaseNotes?: string
       progress?: { percent: number; transferred: number; total: number; bytesPerSecond: number }
       error?: string
     }>
     onStatusChanged: (callback: (status: {
-      status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error'
+      status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'disabled' | 'error'
       version?: string
       releaseNotes?: string
       progress?: { percent: number; transferred: number; total: number; bytesPerSecond: number }
