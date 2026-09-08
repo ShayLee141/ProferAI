@@ -12,6 +12,7 @@ import type {
   AgentStreamPayload,
   AskUserRequest,
   PermissionRequest,
+  PresetReference,
   ProferPermissionMode,
   SDKMessage,
 } from '@profer/shared'
@@ -41,6 +42,12 @@ import {
   type AgentDelegationStatus,
 } from './agent-collaboration-utils'
 import { assertEnabledModelForChannel, listEnabledAgentModelsForChannel } from './agent-model-selection'
+import { getAgentWorkspace } from './agent-workspace-manager'
+import { resolveDelegationPreset } from './agent-delegation-preset'
+import {
+  buildTypeBoxDelegationPresetReferenceSchema,
+  buildZodDelegationPresetReferenceSchema,
+} from './agent-delegation-preset-schema'
 
 interface CollaborationToolContext {
   sessionId: string
@@ -67,6 +74,7 @@ interface DelegationRecord {
   role: AgentDelegationRole
   goal: string
   permissionMode: ProferPermissionMode
+  presetReference?: PresetReference
   status: AgentDelegationStatus
   startedAt: number
   completedAt?: number
@@ -269,14 +277,15 @@ interface DelegateAgentArgs {
   role?: AgentDelegationRole
   task: string
   expectedOutput?: string
-  permissionMode?: ProferPermissionMode
   modelId?: string
+  presetReference?: PresetReference
 }
 
 interface StartDelegationResult {
   record: DelegationRecord
   effectivePermissionMode: ProferPermissionMode
   effectiveModelId?: string
+  effectivePresetReference?: PresetReference
 }
 
 function getRunningDelegationCount(parentSessionId: string): number {
@@ -481,6 +490,7 @@ function getDelegationSummary(record: DelegationRecord): Record<string, unknown>
     role: record.role,
     goal: record.goal,
     permissionMode: record.permissionMode,
+    presetReference: record.presetReference,
     status: record.status,
     startedAt: record.startedAt,
     completedAt: record.completedAt,
@@ -508,6 +518,7 @@ function listKnownDelegations(parentSessionId: string): Array<Record<string, unk
       role: session.delegationRole,
       goal: session.delegationGoal,
       permissionMode: session.permissionMode,
+      presetReference: session.presetReference,
       status: session.delegationStatus,
       startedAt: session.createdAt,
       completedAt: session.delegationStatus && session.delegationStatus !== 'running' ? session.updatedAt : undefined,
@@ -769,12 +780,6 @@ function startDelegation(
   const role = args.role ?? 'custom'
   const title = normalizeTitle(args.title, `协作：${task}`)
   const goal = truncateText(task, DELEGATION_GOAL_CHAR_LIMIT)
-  const parentPermissionMode = getCurrentParentPermissionMode(parent, ctx.permissionMode)
-  const permissionMode = resolveDelegationPermissionMode(
-    parentPermissionMode,
-    args.permissionMode,
-    ctx.agentRuntime ?? parent?.agentRuntime,
-  )
   const effectiveModelId = args.modelId !== undefined
     ? assertEnabledModelForChannel({
         channelId: ctx.channelId,
@@ -785,17 +790,29 @@ function startDelegation(
 
   const { completion, resolveCompletion } = createDelegationCompletion()
 
-  // 创建真实子会话是用户对该项目会话的明确操作：先晋升隐藏父会话，
+  // 优先从持久化父会话继承，旧会话/无父上下文才安全回退 Claude。
+  const inheritedRuntime = parent?.agentRuntime ?? ctx.agentRuntime ?? 'claude'
+  // 会话持久化后的工作区是唯一权威来源。工具调用上下文可能来自已切换项目的旧流，
+  // 不能让它把子会话创建或执行到另一个项目中。
+  const workspaceId = parent?.workspaceId ?? ctx.workspaceId
+  const workspaceSlug = workspaceId ? getAgentWorkspace(workspaceId)?.slug : undefined
+  if (workspaceId && !workspaceSlug) {
+    throw new Error(`父会话工作区不存在: ${workspaceId}`)
+  }
+  // 未指定目标时继承父会话稳定引用；显式目标仍必须在持久化父工作区内解析。
+  // 所有可能失败的校验都必须发生在晋升草稿父会话之前，避免失败调用产生可见副作用。
+  const resolvedPreset = resolveDelegationPreset({
+    parent,
+    target: args.presetReference,
+    workspaceSlug,
+  })
+  const permissionMode = resolveDelegationPermissionMode()
+
+  // 创建真实子会话是用户对该项目会话的明确操作：严格校验通过后再晋升隐藏父会话，
   // 避免正式子会话挂在不可见父节点下而无法从项目树访问。
   const effectiveParent = parent?.draft
     ? updateAgentSessionMeta(parent.id, { draft: false })
     : parent
-  // 优先从持久化父会话继承，旧会话/无父上下文才安全回退 Claude。
-  const inheritedRuntime = effectiveParent?.agentRuntime ?? ctx.agentRuntime ?? 'claude'
-  // 会话持久化后的工作区是唯一权威来源。工具调用上下文可能来自已切换项目的旧流，
-  // 不能让它把子会话创建或执行到另一个项目中。
-  const workspaceId = effectiveParent?.workspaceId ?? ctx.workspaceId
-  // 子会话必须继承父会话预设，避免受限父预设静默回退为 standard。
   const child = createAgentSession(
     title,
     ctx.channelId,
@@ -803,8 +820,10 @@ function startDelegation(
     effectiveModelId,
     inheritedRuntime,
     false,
-    effectiveParent?.presetId,
+    // 先按既有默认创建，再在启动前写入严格解析后的稳定引用，避免裸 ID 作用域歧义。
+    undefined,
   )
+  const effectivePresetReference = resolvedPreset?.reference ?? child.presetReference
   const rootSessionId = effectiveParent?.rootSessionId ?? effectiveParent?.id ?? ctx.sessionId
   updateAgentSessionMeta(child.id, {
     parentSessionId: ctx.sessionId,
@@ -813,6 +832,7 @@ function startDelegation(
     // 继承父会话的定时任务来源，保留自动化血缘；前端以 sourceDelegationId 优先
     // 展示委派徽章，不会被误判为定时任务（#993）。
     sourceAutomationId: effectiveParent?.sourceAutomationId,
+    ...(resolvedPreset ? { presetId: resolvedPreset.preset.id, presetReference: resolvedPreset.reference } : {}),
     delegationRole: role,
     delegationStatus: 'running',
     delegationDepth: (parent?.delegationDepth ?? 0) + 1,
@@ -831,6 +851,7 @@ function startDelegation(
     role,
     goal,
     permissionMode,
+    presetReference: effectivePresetReference,
     status: 'running',
     startedAt: Date.now(),
     completion,
@@ -881,20 +902,24 @@ function startDelegation(
     })
   })
 
-  return { record, effectivePermissionMode: permissionMode, effectiveModelId }
+  return {
+    record,
+    effectivePermissionMode: permissionMode,
+    effectiveModelId,
+    effectivePresetReference,
+  }
 }
 
 function buildCollaborationSchemas(z: ZodModule['z']) {
   const nonBlankString = z.string().trim().min(1)
   const role = z.enum(['explore', 'research', 'implement', 'review', 'custom'])
-  const permissionMode = z.enum(['plan', 'auto', 'bypassPermissions'])
   const delegateItem = z.object({
     title: z.string().optional().describe('子会话标题，简短说明子任务'),
     role: role.optional().describe('子任务角色：explore/research/implement/review/custom'),
     task: nonBlankString.describe('发送给子 Agent 的完整任务说明，必须自包含必要上下文'),
     expectedOutput: z.string().optional().describe('希望子 Agent 最终返回的格式或要点'),
-    permissionMode: permissionMode.optional().describe('子会话权限模式；不能高于父会话权限'),
     modelId: nonBlankString.optional().describe('可选目标模型 ID；必须属于父会话当前渠道且已启用。不传则继承父会话当前模型'),
+    presetReference: buildZodDelegationPresetReferenceSchema(z),
   })
   return {
     availableModels: {},
@@ -903,8 +928,8 @@ function buildCollaborationSchemas(z: ZodModule['z']) {
       role: role.optional().describe('子任务角色：explore/research/implement/review/custom'),
       task: nonBlankString.describe('发送给子 Agent 的完整任务说明，必须自包含必要上下文'),
       expectedOutput: z.string().optional().describe('希望子 Agent 最终返回的格式或要点'),
-      permissionMode: permissionMode.optional().describe('子会话权限模式；不能高于父会话权限'),
       modelId: nonBlankString.optional().describe('可选目标模型 ID；必须属于父会话当前渠道且已启用。不传则继承父会话当前模型'),
+      presetReference: buildZodDelegationPresetReferenceSchema(z),
     },
     delegateBatch: {
       sharedContext: z.string().optional().describe('批量子任务共用背景，会自动拼接到每个子任务前'),
@@ -979,6 +1004,7 @@ export async function injectAgentCollaborationMcpServer(
             delegation: getDelegationSummary(result.record),
             effectivePermissionMode: result.effectivePermissionMode,
             effectiveModelId: result.effectiveModelId,
+            effectivePresetReference: result.effectivePresetReference,
             note: '子会话已启动。需要结果时调用 wait_for_delegations。',
           })
         },
@@ -1018,6 +1044,10 @@ export async function injectAgentCollaborationMcpServer(
             effectiveModels: created.map((item) => ({
               delegationId: item.record.delegationId,
               modelId: item.effectiveModelId,
+            })),
+            effectivePresets: created.map((item) => ({
+              delegationId: item.record.delegationId,
+              presetReference: item.effectivePresetReference,
             })),
             failures,
             createdCount: created.length,
@@ -1246,19 +1276,13 @@ export function buildPiCollaborationTools(
     Type.Literal('custom'),
   ], { description: '子任务角色' }))
 
-  const permissionModeType = Type.Optional(Type.Union([
-    Type.Literal('plan'),
-    Type.Literal('auto'),
-    Type.Literal('bypassPermissions'),
-  ], { description: '子会话权限模式；不能高于父会话权限' }))
-
   const delegateItemType = Type.Object({
     title: Type.Optional(Type.String({ description: '子会话标题' })),
     role: roleType,
     task: Type.String({ description: '发送给子 Agent 的完整任务说明' }),
     expectedOutput: Type.Optional(Type.String({ description: '希望子 Agent 最终返回的格式或要点' })),
-    permissionMode: permissionModeType,
     modelId: Type.Optional(Type.String({ description: '可选目标模型 ID' })),
+    presetReference: buildTypeBoxDelegationPresetReferenceSchema(Type),
   })
 
   function piJsonResult(payload: unknown): { content: Array<{ type: 'text'; text: string }>; details: unknown } {
@@ -1287,8 +1311,8 @@ export function buildPiCollaborationTools(
         role: roleType,
         task: Type.String({ description: '发送给子 Agent 的完整任务说明，必须自包含必要上下文' }),
         expectedOutput: Type.Optional(Type.String({ description: '希望子 Agent 最终返回的格式或要点' })),
-        permissionMode: permissionModeType,
         modelId: Type.Optional(Type.String({ description: '可选目标模型 ID' })),
+        presetReference: buildTypeBoxDelegationPresetReferenceSchema(Type),
       }),
       async execute(_toolCallId: string, params: unknown) {
         const args = params as DelegateAgentArgs
@@ -1298,6 +1322,7 @@ export function buildPiCollaborationTools(
           delegation: getDelegationSummary(result.record),
           effectivePermissionMode: result.effectivePermissionMode,
           effectiveModelId: result.effectiveModelId,
+          effectivePresetReference: result.effectivePresetReference,
           note: '子会话已启动。需要结果时调用 wait_for_delegations。',
         })
       },
@@ -1341,6 +1366,10 @@ export function buildPiCollaborationTools(
           effectiveModels: created.map((item) => ({
             delegationId: item.record.delegationId,
             modelId: item.effectiveModelId,
+          })),
+          effectivePresets: created.map((item) => ({
+            delegationId: item.record.delegationId,
+            presetReference: item.effectivePresetReference,
           })),
           failures,
           createdCount: created.length,
