@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { workspacePresetsAtom } from '@/atoms/agent-preset-atoms'
+import { agentPresetCacheKey, agentPresetsLoadedAtom, workspacePresetsAtom } from '@/atoms/agent-preset-atoms'
 import { agentSessionsAtom, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
 import type { AgentEffort, AgentPreset, PresetReference, ProferPermissionMode } from '@profer/shared'
 import { cn } from '@/lib/utils'
@@ -59,6 +59,8 @@ interface PresetSelectorProps {
 
 export function PresetSelector({ sessionId, persistedPresetId, persistedPresetReference, workspaceSlug, open, onOpenChange, onManagePresets }: PresetSelectorProps): React.ReactElement {
   const [presets, setPresets] = useAtom(workspacePresetsAtom(workspaceSlug))
+  const loadedPresetCaches = useAtomValue(agentPresetsLoadedAtom)
+  const setLoadedPresetCaches = useSetAtom(agentPresetsLoadedAtom)
   const [internalOpen, setInternalOpen] = React.useState(false)
   const [switchingReference, setSwitchingReference] = React.useState<PresetReference | null>(null)
   const isOpen = open ?? internalOpen
@@ -74,9 +76,12 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
 
   React.useEffect(() => {
     void window.electronAPI.listAgentPresets(workspaceSlug)
-      .then(setPresets)
+      .then((list) => {
+        setPresets(list)
+        setLoadedPresetCaches((prev) => new Set(prev).add(agentPresetCacheKey(workspaceSlug)))
+      })
       .catch((error) => console.error('[PresetSelector] 加载工作区预设失败:', error))
-  }, [workspaceSlug, capabilitiesVersion, setPresets])
+  }, [workspaceSlug, capabilitiesVersion, setPresets, setLoadedPresetCaches])
 
   // Manager 返回当前工作区可见预设；明确停用项不能出现在菜单中（含元预设）。
   const availablePresets = React.useMemo(
@@ -86,7 +91,8 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
   const current = persistedPresetReference
     ? availablePresets.find((preset) => selectablePresetMatchesReference(preset, persistedPresetReference))
     : availablePresets.find((preset) => preset.id === persistedPresetId)
-  const presetRequired = !current
+  const presetsLoaded = loadedPresetCaches.has(agentPresetCacheKey(workspaceSlug))
+  const presetRequired = presetsLoaded && availablePresets.length > 0 && !current
 
   const closeMenu = React.useCallback(() => {
     setInternalOpen(false)

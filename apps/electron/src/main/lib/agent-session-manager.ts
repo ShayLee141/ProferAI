@@ -25,7 +25,7 @@ import {
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { assertEnabledModelForChannel } from './agent-model-selection'
 import { copyForkWorkspaceFiles } from './agent-fork-workspace-copy'
-import { normalizeSessionPresetId, presetReferenceForId } from './agent-preset-manager'
+import { listAgentPresets, normalizeSessionPresetId, presetReferenceForId } from './agent-preset-manager'
 import { copySettledPiHarnessEventsForFork } from './pi-harness/pi-harness-store'
 import { forkPiSessionArtifact } from './pi-session-fork'
 import { isEphemeralTransportError } from './error-patterns'
@@ -389,6 +389,10 @@ export function createAgentSession(
   // presetId 时，前者会回退为 standard，而后者会得到空引用，发送校验就会
   // 错误地报 AGENT_PRESET_REQUIRED。
   const normalizedPresetId = normalizeSessionPresetId(presetWorkspaceSlug, presetId)
+  // 未显式指定或默认值已被清除时，自动选择当前工作区首个仍启用的预设。
+  // 只有工作区确实没有任何可用预设时才保留空值，让 UI 展示配置提示。
+  const effectivePresetId = normalizedPresetId || listAgentPresets(presetWorkspaceSlug)
+    .find((preset) => preset.enabledInWorkspace !== false)?.id || ''
   const meta: AgentSessionMeta = {
     id: randomUUID(),
     title: title || '新 Agent 会话',
@@ -396,7 +400,7 @@ export function createAgentSession(
     modelId,
     workspaceId,
     agentRuntime: normalizeAgentRuntime(agentRuntime),
-    ...(normalizedPresetId ? { presetId: normalizedPresetId, presetReference: presetReferenceForId(presetWorkspaceSlug, normalizedPresetId) } : {}),
+    ...(effectivePresetId ? { presetId: effectivePresetId, presetReference: presetReferenceForId(presetWorkspaceSlug, effectivePresetId) } : {}),
     ...(draft ? { draft: true } : {}),
     createdAt: now,
     updatedAt: now,

@@ -14,6 +14,16 @@ import { DEFAULT_PRESET_ID } from '@profer/shared'
 /** 按工作区缓存的预设列表（预设为工作区级配置） */
 export const agentPresetsAtom = atom<Map<string, AgentPreset[]>>(new Map())
 
+/** 已完成加载的工作区缓存键；空列表只有在加载完成后才代表确实没有可用预设。 */
+const agentPresetsLoadedStateAtom = atom<Set<string>>(new Set<string>())
+export const agentPresetsLoadedAtom = atom(
+  (get) => get(agentPresetsLoadedStateAtom),
+  (get, set, update: Set<string> | ((previous: Set<string>) => Set<string>)) => {
+    const previous = get(agentPresetsLoadedStateAtom)
+    set(agentPresetsLoadedStateAtom, typeof update === 'function' ? update(previous) : update)
+  },
+)
+
 const NO_WORKSPACE_PRESET_CACHE_KEY = '__no_workspace__'
 
 export function agentPresetCacheKey(workspaceSlug: string | undefined): string {

@@ -28,7 +28,8 @@ import { PermissionBanner } from './PermissionBanner'
 import { RuntimeProcessPanel } from './RuntimeProcessPanel'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import { PresetSelector } from './PresetSelector'
-import { agentPresetCacheKey, agentPresetsAtom } from '@/atoms/agent-preset-atoms'
+import { referenceForSelectablePreset } from './preset-selector-utils'
+import { agentPresetCacheKey, agentPresetsAtom, agentPresetsLoadedAtom } from '@/atoms/agent-preset-atoms'
 import { AskUserBanner } from './AskUserBanner'
 import { ExitPlanModeBanner } from './ExitPlanModeBanner'
 import { PlanModeDashedBorder } from './PlanModeDashedBorder'
@@ -651,7 +652,9 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   const setAgentSessions = useSetAtom(agentSessionsAtom)
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
   const agentPresetsMap = useAtomValue(agentPresetsAtom)
+  const loadedPresetCaches = useAtomValue(agentPresetsLoadedAtom)
   const setAgentPresets = useSetAtom(agentPresetsAtom)
+  const setLoadedPresetCaches = useSetAtom(agentPresetsLoadedAtom)
   const revealRendererDraft = React.useCallback(() => {
     setDraftSessionIds((previous: Set<string>) => {
       if (!previous.has(sessionId)) return previous
@@ -697,13 +700,17 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   React.useEffect(() => {
     const slug = workspaces.find((w) => w.id === currentWorkspaceId)?.slug
     void window.electronAPI.listAgentPresets(slug)
-      .then((list) => setAgentPresets((prev) => {
-        const next = new Map(prev)
-        next.set(agentPresetCacheKey(slug), list)
-        return next
-      }))
+      .then((list) => {
+        const cacheKey = agentPresetCacheKey(slug)
+        setAgentPresets((prev) => {
+          const next = new Map(prev)
+          next.set(cacheKey, list)
+          return next
+        })
+        setLoadedPresetCaches((prev) => new Set(prev).add(cacheKey))
+      })
       .catch((error) => console.error('[Agent] 加载预设列表失败:', error))
-  }, [setAgentPresets, workspaces, currentWorkspaceId, capabilitiesVersion])
+  }, [setAgentPresets, setLoadedPresetCaches, workspaces, currentWorkspaceId, capabilitiesVersion])
   // 保持 channelId 稳定：初始化前使用上次有效值，避免工具栏抖动
   const stableChannelIdRef = React.useRef(agentChannelId)
   if (agentChannelId) stableChannelIdRef.current = agentChannelId
@@ -970,14 +977,26 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   // 预设有效性由工作区预设 API 返回；优先按稳定作用域引用匹配，旧会话才回退裸 ID。
   const sessionPresetId = sessionMeta?.presetId
   const sessionPresetReference = sessionMeta?.presetReference
-  const workspacePresetList = agentPresetsMap.get(agentPresetCacheKey(workspaceSlug ?? undefined)) ?? []
+  const presetCacheKey = agentPresetCacheKey(workspaceSlug ?? undefined)
+  const workspacePresetList = agentPresetsMap.get(presetCacheKey) ?? []
+  const presetsLoaded = loadedPresetCaches.has(presetCacheKey)
   const hasUsableSessionPreset = Boolean(sessionPresetId && workspacePresetList.some((preset) => {
     if (preset.enabledInWorkspace === false || preset.id !== sessionPresetId) return false
     if (!sessionPresetReference) return true
     const scope = preset.scope ?? (preset.isBuiltin ? 'builtin-meta' : 'workspace')
     return scope === sessionPresetReference.presetScope
   }))
-  const presetSelectionRequired = Boolean(sessionMeta && !hasUsableSessionPreset)
+  const presetSelectionRequired = Boolean(sessionMeta && presetsLoaded && workspacePresetList.length > 0 && !hasUsableSessionPreset)
+  // 旧会话或异常入口没有有效绑定时，自动采用当前工作区列表中的首个可用预设，避免把内部修复问题暴露给用户。
+  React.useEffect(() => {
+    if (!sessionMeta || !presetsLoaded || hasUsableSessionPreset) return
+    const fallback = workspacePresetList.find((preset) => preset.enabledInWorkspace !== false)
+    if (!fallback) return
+    const reference = referenceForSelectablePreset(fallback, workspaceSlug ?? undefined)
+    void window.electronAPI.rebindAgentSessionPresetReference(sessionId, reference)
+      .then((updated) => setAgentSessions((previous) => previous.map((session) => session.id === sessionId ? updated : session)))
+      .catch((error) => console.error('[Agent] 自动匹配预设失败:', error))
+  }, [hasUsableSessionPreset, presetsLoaded, sessionId, sessionMeta, setAgentSessions, workspacePresetList, workspaceSlug])
   const [presetMenuOpen, setPresetMenuOpen] = React.useState(false)
   const openWorkspacePresets = React.useCallback(() => {
     setActiveView('agent-skills')
