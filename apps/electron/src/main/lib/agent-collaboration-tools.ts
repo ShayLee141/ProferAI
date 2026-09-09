@@ -56,7 +56,7 @@ interface CollaborationToolContext {
   workspaceId?: string
   agentRuntime?: import('@profer/shared').AgentRuntime
   permissionMode?: ProferPermissionMode
-  triggeredBy?: 'user' | 'automation' | 'delegation'
+  triggeredBy?: 'user' | 'automation' | 'delegation' | 'goal'
 }
 
 interface CollaborationToolResult extends Record<string, unknown> {

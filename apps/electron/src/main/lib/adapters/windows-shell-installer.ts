@@ -1,4 +1,4 @@
-export type WindowsShellInstallerTrigger = 'user' | 'automation' | 'delegation' | undefined
+export type WindowsShellInstallerTrigger = 'user' | 'automation' | 'delegation' | 'goal' | undefined
 
 /**
  * 仅对没有 Shell 的前台 Windows Agent 提供安装工具。

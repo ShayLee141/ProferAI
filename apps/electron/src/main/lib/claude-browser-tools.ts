@@ -10,7 +10,7 @@ export interface ClaudeBrowserToolContext {
   workspaceId?: string
   agentCwd?: string
   allowedRoots: string[]
-  executionSource?: 'user' | 'automation' | 'delegation'
+  executionSource?: 'user' | 'automation' | 'delegation' | 'goal'
   disabledTools?: string[]
 }
 

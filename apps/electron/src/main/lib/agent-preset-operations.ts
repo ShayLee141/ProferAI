@@ -26,7 +26,7 @@ import {
 import { getConfigDir } from './config-paths'
 import { getAgentSessionMeta } from './agent-session-manager'
 
-export type AgentPresetOperationSource = 'user' | 'automation' | 'delegation'
+export type AgentPresetOperationSource = 'user' | 'automation' | 'delegation' | 'goal'
 export type AgentPresetMutationOperation = 'create' | 'copy' | 'switch' | 'propose_update' | 'propose_default' | 'commit_change'
 
 export interface AgentPresetOperationContext {

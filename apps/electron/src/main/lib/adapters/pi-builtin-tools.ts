@@ -128,7 +128,7 @@ export interface PiBuiltinToolsContext {
   isTeamWorkspace?: boolean
   workspaceSlug?: string
   permissionMode?: ProferPermissionMode
-  triggeredBy?: 'user' | 'automation' | 'delegation'
+  triggeredBy?: 'user' | 'automation' | 'delegation' | 'goal'
   /** 当前 Agent 工作目录；用于解析生图产物、参考图和本地网页预览的相对路径。 */
   agentCwd?: string
   /** 图片外发前必须校验在这些已授权目录内。 */

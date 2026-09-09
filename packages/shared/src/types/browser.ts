@@ -28,7 +28,7 @@ export interface BrowserViewLayout {
   pageBounds: BrowserViewBounds
 }
 
-export type BrowserExecutionSource = 'user' | 'automation' | 'delegation'
+export type BrowserExecutionSource = 'user' | 'automation' | 'delegation' | 'goal'
 
 export type BrowserTraceAction = 'navigate' | 'observe' | 'wait' | 'click' | 'fill' | 'press' | 'dom' | 'script' | 'screenshot' | 'tab'
 export type BrowserOperationStatus = 'dispatched' | 'verified' | 'failed' | 'unknown'
