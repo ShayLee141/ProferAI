@@ -1317,19 +1317,32 @@ export function setWorkspacePresetEnabled(workspaceSlug: string, presetId: strin
   writeConfig(workspaceSlug, config)
 }
 
-/** 删除工作区自定义预设；内置预设拒绝；若删除默认预设则改用首个仍可用预设。 */
+/**
+ * 删除工作区自定义预设；内置预设拒绝。
+ * 默认引用可以在同一份配置写入中切换 fallback，但会话/自动任务引用必须先改绑，
+ * 避免删除后留下悬空 presetReference。
+ */
 export function deleteAgentPreset(workspaceSlug: string | undefined, presetId: string): void {
   assertNotBuiltin(presetId)
   const config = readConfig(workspaceSlug)
   const index = config.presets.findIndex((p) => p.id === presetId)
-  if (index === -1) throw new Error(`预设不存在: ${presetId}`)
+  if (index === -1) throw new AgentPresetError('PRESET_NOT_FOUND', `预设不存在: ${presetId}`)
+  if (!workspaceSlug) throw new AgentPresetError('PRESET_WORKSPACE_REQUIRED', '删除工作区预设需要工作区')
 
-  config.presets.splice(index, 1)
-  if (config.defaultPresetId === presetId) {
-    if (!workspaceSlug) throw new AgentPresetError('PRESET_WORKSPACE_REQUIRED', '删除默认预设需要工作区')
-    assignFallbackDefaultPreset(config, workspaceSlug, presetId)
+  const reference = presetReferenceForId(workspaceSlug, presetId)
+  const report = getPresetReferenceReport(reference)
+  const nonDefaultBlockers = report.blockers.filter((blocker) => blocker.reason !== 'workspace-default')
+  if (nonDefaultBlockers.length > 0) {
+    throw new AgentPresetError('PRESET_DELETE_BLOCKED', '预设仍被会话或自动任务引用，请先改绑', {
+      ...report,
+      blockers: nonDefaultBlockers,
+      canDelete: false,
+    })
   }
-  writeConfig(workspaceSlug, config)
+
+  const nextConfig = { ...config, presets: config.presets.filter((p) => p.id !== presetId) }
+  if (config.defaultPresetId === presetId) assignFallbackDefaultPreset(nextConfig, workspaceSlug, presetId)
+  writeConfig(workspaceSlug, nextConfig)
 }
 
 // ============================================================

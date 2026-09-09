@@ -118,6 +118,7 @@ export const CODEX_FAST_MODE_MODEL_IDS = [
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna',
+  'gpt-6-astra',
 ] as const
 
 export function isCodexFastModeSupportedModel(modelId: string | undefined): boolean {
@@ -792,7 +793,7 @@ export interface AgentSessionMeta {
   lastInterruptLabel?: string
   /** 最近中断时间戳 */
   lastInterruptAt?: number
-  /** 队列「自动发送」开关：轮结束是否自动发送队首消息。per-session 持久化，新会话及历史缺省值为开（true）。手动停止/异常结束会自动置为 false。 */
+  /** 队列「自动发送」开关：轮结束是否自动发送队首消息。per-session 持久化，新会话及历史缺省值为开（true），用户手动关闭后保持关闭。手动停止/异常结束会自动置为 false。 */
   autoQueueSendEnabled?: boolean
   /** 该会话当前的权限模式（持久化到磁盘，重启后恢复）。未设置时新会话默认 auto */
   permissionMode?: ProferPermissionMode
@@ -1163,6 +1164,48 @@ export interface WorkspaceCapabilities {
   memory: WorkspaceMemorySummary
 }
 
+// ===== Goal 长时自主执行 =====
+
+export type AgentGoalStatus = 'active' | 'paused' | 'completed' | 'blocked' | 'failed' | 'stopped'
+
+export interface AgentGoalLimits {
+  maxIterations: number
+  maxConsecutiveFailures: number
+  maxDurationMs: number
+}
+
+export interface AgentGoalState {
+  id: string
+  sessionId: string
+  goal: string
+  status: AgentGoalStatus
+  iteration: number
+  consecutiveFailures: number
+  startedAt: number
+  updatedAt: number
+  limits: AgentGoalLimits
+  lastSummary?: string
+  lastEvidence?: string[]
+  stopReason?: string
+}
+
+export type AgentGoalCommand =
+  | { type: 'not_goal' }
+  | { type: 'start'; goal: string }
+  | { type: 'status' | 'pause' | 'resume' | 'stop' | 'clear' }
+  | { type: 'invalid'; reason: string }
+
+export interface AgentGoalIterationResult {
+  status: 'continue' | 'complete' | 'blocked'
+  summary: string
+  evidence: string[]
+}
+
+export type AgentGoalContinuation =
+  | { action: 'continue'; consecutiveFailures: number }
+  | { action: 'complete'; consecutiveFailures: number }
+  | { action: 'blocked' | 'failed' | 'limit_reached'; consecutiveFailures: number; reason: string }
+
 // ===== Agent 发送输入 =====
 
 /**
@@ -1196,7 +1239,7 @@ export interface AgentSendInput {
   /** 渲染进程生成的流式开始时间戳，主进程原样回传到 STREAM_COMPLETE，确保竞态保护比较的是同一个值 */
   startedAt?: number
   /** 触发来源：用户手动 vs 定时任务自动触发（用于 UI 区分标记） */
-  triggeredBy?: 'user' | 'automation' | 'delegation'
+  triggeredBy?: 'user' | 'automation' | 'delegation' | 'goal'
   /** 前端预生成的消息 UUID（透传到持久化消息，用于队列乐观气泡与消息重载按 uuid 合并去重） */
   uuid?: string
   /** 定时任务执行上下文（注入到系统提示词，用户不可见） */
@@ -1394,6 +1437,11 @@ export interface AgentStreamEvent {
  * Agent 流式完成事件载荷（主进程 → 渲染进程）
  * 包含已持久化的消息列表，避免异步重新加载的竞态窗口。
  */
+export interface AgentGoalEvent {
+  sessionId: string
+  state: AgentGoalState | null
+}
+
 export interface AgentStreamCompletePayload {
   sessionId: string
   /** 已持久化的完整消息列表 */
@@ -1817,6 +1865,20 @@ export const AGENT_IPC_CHANNELS = {
   SEND_MESSAGE: 'agent:send-message',
   /** 中止 Agent 执行 */
   STOP_AGENT: 'agent:stop',
+  /** 创建当前会话的 Goal */
+  START_GOAL: 'agent:goal-start',
+  /** 获取当前会话 Goal */
+  GET_GOAL: 'agent:goal-get',
+  /** 暂停当前 Goal */
+  PAUSE_GOAL: 'agent:goal-pause',
+  /** 恢复当前 Goal */
+  RESUME_GOAL: 'agent:goal-resume',
+  /** 停止当前 Goal */
+  STOP_GOAL: 'agent:goal-stop',
+  /** 清除已结束 Goal */
+  CLEAR_GOAL: 'agent:goal-clear',
+  /** Goal 状态变化事件 */
+  GOAL_EVENT: 'agent:goal-event',
 
   // Pi 受管浏览器（网页内容与 CDP 仅驻留主进程）
   OPEN_BROWSER: 'agent:open-browser',

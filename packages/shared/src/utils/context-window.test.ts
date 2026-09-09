@@ -42,6 +42,11 @@ describe('DeepSeek V4 1M 上下文能力', () => {
   test('Given ChatGPT Codex Terra When renderer requires a temporary fallback Then use the verified 1.05M window', () => {
     expect(inferContextWindow('gpt-5.6-terra')).toBe(CODEX_GPT_CONTEXT_WINDOW)
   })
+
+  test('Given GPT-6 Astra When renderer requires a fallback Then use the verified 1.05M window', () => {
+    expect(supports1MContext('gpt-6-astra')).toBe(true)
+    expect(inferContextWindow('gpt-6-astra')).toBe(CODEX_GPT_CONTEXT_WINDOW)
+  })
 })
 
 describe('Agent SDK 1M 模型转换', () => {

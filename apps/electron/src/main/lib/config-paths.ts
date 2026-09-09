@@ -1098,6 +1098,11 @@ export function getAutomationsPath(): string {
   return join(getConfigDir(), 'automations.json')
 }
 
+/** 获取本地主动建议配置文件路径。 */
+export function getRecommendationsPath(): string {
+  return join(getConfigDir(), 'recommendations.json')
+}
+
 /**
  * 获取新标签页起始页数据文件路径（书签 + 最近访问历史）
  *

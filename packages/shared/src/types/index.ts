@@ -69,6 +69,7 @@ export * from './wechat'
 
 // 定时任务（Automation）相关类型
 export * from './automation'
+export * from './recommendation'
 
 // 论文知识库（Paper Knowledge Base）相关类型
 export * from './knowledge-base'

@@ -63,7 +63,7 @@ export function supports1MContext(modelId: string): boolean {
     if (m.includes('fable-5')) return true
     return false
   }
-  if (/^gpt-(?:5\.4|5\.5|5\.6-(?:sol|terra|luna))$/.test(m)) return true
+  if (/^gpt-(?:5\.4|5\.5|5\.6-(?:sol|terra|luna)|6-astra)$/.test(m)) return true
   if (isDeepSeekV4Model(m)) return true
   if (m.includes('mimo-v2.5') || m.includes('mimo-v2-pro')) return true
   if (m.includes('glm-5.2') || m.includes('glm-5.3')) return true
@@ -83,7 +83,7 @@ export function supports1MContext(modelId: string): boolean {
 export function inferContextWindow(model?: string): number | undefined {
   if (!model) return undefined
   const normalized = normalizeContextModelId(model)
-  if (normalized && /^gpt-(?:5\.4|5\.5|5\.6-(?:sol|terra|luna))$/.test(normalized)) {
+  if (normalized && /^gpt-(?:5\.4|5\.5|5\.6-(?:sol|terra|luna)|6-astra)$/.test(normalized)) {
     return CODEX_GPT_CONTEXT_WINDOW
   }
   if (supports1MContext(model)) return ONE_MILLION_CONTEXT_WINDOW

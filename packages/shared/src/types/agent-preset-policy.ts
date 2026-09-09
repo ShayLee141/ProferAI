@@ -68,11 +68,33 @@ export interface EffectiveAgentPresetPolicy {
 }
 
 export interface EffectiveAgentPresetPolicyOptions {
+  /** 调用方请求的权限模式；只能保持或收紧预设声明的上限。 */
   permissionMode?: ProferPermissionMode
+  /** Profer 内部 Goal 循环需要保持无人值守权限语义。 */
+  triggeredBy?: 'goal'
   pptCapabilityActive?: boolean
   loadedMcpServerNames?: readonly string[]
   /** runtime 理论上是否支持子 Agent；默认 false，避免静态信息意外放权。 */
   runtimeSupportsSubagents?: boolean
+}
+
+/**
+ * 解析预设与调用方请求的最终权限模式。
+ * 权限等级按 plan（最严格）→ auto → bypassPermissions（最宽松）排序，
+ * 因此外部入口不能借由 override 静默放宽预设权限。
+ */
+export function resolveEffectivePermissionMode(
+  presetPermissionMode: ProferPermissionMode | undefined,
+  requestedOverride?: ProferPermissionMode,
+): ProferPermissionMode {
+  const presetMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  if (!requestedOverride) return presetMode
+  const strictness: Record<ProferPermissionMode, number> = {
+    plan: 0,
+    auto: 1,
+    bypassPermissions: 2,
+  }
+  return strictness[requestedOverride] < strictness[presetMode] ? requestedOverride : presetMode
 }
 
 function sourceForScope(
@@ -156,7 +178,11 @@ export function createEffectiveAgentPresetPolicy(
     allowSubagents: !disabledToolGroups.has('collaboration'),
     runtimeSupportsSubagents: options.runtimeSupportsSubagents === true,
     sessionCanUseSubagents: options.runtimeSupportsSubagents === true && !disabledToolGroups.has('collaboration'),
-    permissionMode: options.permissionMode ?? preset.permissionMode ?? PROFER_DEFAULT_PERMISSION_MODE,
+    // Goal 是 Profer 内部的持续执行入口，沿用全局 bypassPermissions 语义，
+    // 不让会话预设的 plan/auto 交互设置把自主循环重新卡回审批。
+    permissionMode: options.triggeredBy === 'goal'
+      ? 'bypassPermissions'
+      : resolveEffectivePermissionMode(preset.permissionMode, options.permissionMode),
     ...(preset.effort !== undefined && { effort: preset.effort }),
     pptCapabilityActive: options.pptCapabilityActive === true,
     source: sourceForScope(presetReference.presetScope ?? preset.scope),

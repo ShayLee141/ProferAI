@@ -4,8 +4,8 @@
 > 日期：2026-06-20  
 > 范围：Proma OSS Electron app 的主动协作、定时任务、Monitor、Memory 插件化与 UI 设计
 >
-> **⚠️ 实现状态（2026-07-02 扫描）：本文档为纯架构设计，Phase 1-5 均未进入代码实现阶段。**
-> - ❌ Phase 1 (Proactive foundation / Proactive Center UI / Today / Schedules / Runs)
+> **⚠️ 实现状态（2026-09-09 更新）：完整 Phase 1-5 仍未完成；但已落地 Automation Recommendation MVP：本地推荐类型/持久化、基于 Automation 运行历史的确定性推荐引擎、IPC 反馈链路，以及规划中心内的建议卡。Proactive Center、Monitor、Memory routine、PluginRuntime 仍未实现。**
+> - ⚠️ Phase 1（部分完成：已有 Automation 底座 + Recommendation MVP；Proactive Center UI / Today / Monitor 统一工作台仍未完成）
 > - ❌ Phase 2 (Proma Memory plugin / memory-daily routine)
 > - ❌ Phase 3 (Recommendation cards / Agent inline recommendation)
 > - ❌ Phase 4 (Monitor MVP / MonitorService / session stale monitor)

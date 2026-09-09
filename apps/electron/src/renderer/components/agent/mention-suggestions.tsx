@@ -46,7 +46,6 @@ function createMentionSuggestion<T>(
     // 注意：设为 [' '] 不能阻止"空输入框触发"——TipTap 在块开头的前缀为空串，
     // 始终通过校验；却会让中文/单词后紧跟触发符无法触发，属回归。
     allowedPrefixes: null,
-
     items: async ({ query }): Promise<T[]> => {
       const slug = workspaceSlugRef.current
       if (!slug) return []
@@ -88,6 +87,12 @@ function createMentionSuggestion<T>(
           if (!isSuggestionTriggerPresent(props.editor, props.range, config.char)) {
             return
           }
+          // `/goal` 是 Agent 内置命令，不是 Skill 引用。这里仅跳过弹窗，
+          // 不使用 Suggestion 的 allow 钩子，避免影响带斜杠文本的粘贴事务。
+          if (config.char === '/') {
+            const textBeforeTrigger = props.editor.state.doc.textBetween(0, props.range.to, '', '')
+            if (/^\/goal(?:\s|$)/i.test(textBeforeTrigger.trimStart())) return
+          }
 
           mentionActiveRef.current = true
           mentionItemCountRef.current = props.items.length
@@ -106,7 +111,7 @@ function createMentionSuggestion<T>(
             },
             editor: props.editor,
           })
-          popup = createMentionPopup(renderer.element)
+          popup = createMentionPopup(renderer.element, config.char)
           positionPopup(popup, props.clientRect?.())
 
           blurHandler = () => {

@@ -466,6 +466,7 @@ describe('ChatGPT Codex 模型目录补丁', () => {
     expect(ids).toContain('gpt-5.6-sol')
     expect(ids).toContain('gpt-5.6-terra')
     expect(ids).toContain('gpt-5.6-luna')
+    expect(ids).toContain('gpt-6-astra')
     expect(new Set(ids).size).toBe(ids.length)
   })
 
@@ -506,5 +507,6 @@ describe('ChatGPT Codex 模型目录补丁', () => {
     expect(byId.get('gpt-5.4')).toBe(1_050_000)
     expect(byId.get('gpt-5.4-mini')).toBe(400_000)
     expect(byId.get('gpt-5.5')).toBe(1_050_000)
+    expect(byId.get('gpt-6-astra')).toBe(1_050_000)
   })
 })

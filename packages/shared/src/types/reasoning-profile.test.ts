@@ -2,6 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { resolveReasoningProfile } from './reasoning-profile'
 
 describe('GLM-5.3 reasoning profile', () => {
+  test('Given GPT-6 Astra When resolving Then exposes five supported effort levels', () => {
+    const profile = resolveReasoningProfile({ modelId: 'gpt-6-astra', transport: 'openai-responses' })
+
+    expect(profile?.id).toBe('openai-reasoning-astra')
+    expect(profile?.levels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(profile?.encodings['openai-responses']?.effortMap.off).toBeNull()
+    expect(profile?.encodings['openai-responses']?.effortMap.minimal).toBe('low')
+  })
   test('Given the Zhipu OpenAI protocol When resolving GLM-5.3 Then exposes only off/high with the official toggle encoding', () => {
     const profile = resolveReasoningProfile({ modelId: 'glm-5.3', transport: 'openai-completions' })
 

@@ -56,7 +56,11 @@ export function injectOpenAIThinkingLevel(
   const modelId = typeof payload.model === 'string' ? payload.model : undefined
   if (!isCodexFastModeSupportedModel(modelId)) return payload
 
-  const effort = THINKING_LEVEL_TO_EFFORT[thinkingLevel] ?? 'none'
+  const isGpt6Astra = modelId?.toLowerCase() === 'gpt-6-astra'
+  // GPT-6 Astra 不支持 none/minimal；关闭或最小档位统一降级为 low，避免发送非法 effort。
+  const effort = isGpt6Astra
+    ? (thinkingLevel === 'off' || thinkingLevel === 'minimal' ? 'low' : THINKING_LEVEL_TO_EFFORT[thinkingLevel] ?? 'low')
+    : THINKING_LEVEL_TO_EFFORT[thinkingLevel] ?? 'none'
 
   // 剥离 reasoning.mode（OAuth 不支持），写入 reasoning.effort
   return {

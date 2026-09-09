@@ -35,8 +35,13 @@ export function isSuggestionTriggerPresent(
 }
 
 /** 创建弹窗容器并挂载到 body */
-export function createMentionPopup(content: HTMLElement): HTMLDivElement {
+export function createMentionPopup(content: HTMLElement, triggerChar?: string): HTMLDivElement {
+  // 多个保活 Tab 或异步 Suggestion 可能留下旧弹窗；同一种触发符只保留当前弹窗。
+  if (triggerChar) {
+    document.querySelectorAll<HTMLElement>(`[data-profer-mention-popup="${triggerChar}"]`).forEach((element) => element.remove())
+  }
   const popup = document.createElement('div')
+  popup.dataset.proferMentionPopup = triggerChar ?? 'unknown'
   popup.style.position = 'absolute'
   popup.style.zIndex = '9999'
   popup.style.visibility = 'hidden'

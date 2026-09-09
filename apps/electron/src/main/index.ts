@@ -134,7 +134,7 @@ for (const key of Object.keys(process.env)) {
 }
 
 import { createApplicationMenu, installTextContextMenus } from './menu'
-import { registerIpcHandlers, setRendererReadyHandler } from './ipc'
+import { registerIpcHandlers, setRendererReadyHandler, stopAllGoalsForProcessExit } from './ipc'
 import { setRemoteServiceEnabled, startRemoteService, stopRemoteService } from './lib/remote-service'
 import { createTray, destroyTray, getTray } from './tray'
 import { initializeRuntime } from './lib/runtime-init'
@@ -1065,7 +1065,8 @@ app.on('before-quit', () => {
   // 标记正在退出，让 close 事件不再阻止关闭
   setQuitting()
 
-  // 中止所有活跃的 Agent 和 Chat 子进程
+  // 中止所有活跃的 Goal、Agent 和 Chat 子进程
+  stopAllGoalsForProcessExit()
   stopAllAgents()
   void disposePiMcpConnections()
   disposeLarkCliService()

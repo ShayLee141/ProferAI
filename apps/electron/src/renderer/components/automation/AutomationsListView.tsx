@@ -16,6 +16,8 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { Clock, Pause, Play, Power, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { AutomationRecommendations } from './AutomationRecommendations'
+import type { Recommendation } from '@profer/shared'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { agentWorkspacesAtom } from '@/atoms/agent-atoms'
 import {
@@ -70,6 +72,7 @@ export function AutomationsListView({ embedded = false }: { embedded?: boolean }
   const workspaces = useAtomValue(agentWorkspacesAtom)
   /** 预设 ID → 名称 映射（跨工作区合并，列表 badge 展示用） */
   const [presetNames, setPresetNames] = React.useState<Map<string, string>>(new Map())
+  const [recommendations, setRecommendations] = React.useState<Recommendation[]>([])
 
   React.useEffect(() => {
     let cancelled = false
@@ -94,9 +97,18 @@ export function AutomationsListView({ embedded = false }: { embedded?: boolean }
   }, [automations, workspaces])
 
   const refreshList = React.useCallback(async () => {
-    const list = await window.electronAPI.listAutomations()
+    const [list, suggested] = await Promise.all([
+      window.electronAPI.listAutomations(),
+      window.electronAPI.refreshRecommendations(),
+    ])
     setAutomations(list)
+    setRecommendations(suggested)
   }, [setAutomations])
+
+  React.useEffect(() => {
+    void refreshList()
+    return window.electronAPI.onRecommendationsChanged(() => { void refreshList() })
+  }, [refreshList])
 
   const current = automations.filter((a) => a.active)
   const paused = automations.filter((a) => !a.active)
@@ -120,6 +132,7 @@ export function AutomationsListView({ embedded = false }: { embedded?: boolean }
   return (
     <div className={cn('h-full flex flex-col overflow-hidden', embedded && 'rounded-b-2xl bg-card')}>
       <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="w-full px-2 pt-2"><AutomationRecommendations recommendations={recommendations} onRefresh={refreshList} /></div>
         {automations.length === 0 ? (
           <EmptyState onCreate={handleCreate} />
         ) : (

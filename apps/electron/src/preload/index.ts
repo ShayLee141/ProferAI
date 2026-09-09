@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, LARK_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, CHANGELOG_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AUTH_IPC_CHANNELS, SYNC_IPC_CHANNELS, TEAM_IPC_CHANNELS, SKILL_MARKETPLACE_IPC_CHANNELS, SKILL_MASTER_IPC_CHANNELS, GLOBAL_SKILL_IPC_CHANNELS, TEAM_FILE_IPC_CHANNELS, TEAM_MEMORY_IPC_CHANNELS, SSE_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, AGENT_PRESET_IPC_CHANNELS, type Todo, type CalendarEvent, type TodoListQuery, type CalendarEventListQuery, type PlanningGroup, type PlanningGroupScope, type PlanningTag, type PlanningReminder, type ActivePlanningReminder, type PlanningAgentOperation, type PlanningChange, type CreateTodoInput, type UpdateTodoInput, type CreateCalendarEventInput, type UpdateCalendarEventInput, type CreatePlanningGroupInput, type UpdatePlanningGroupInput, type CreatePlanningTagInput, type UpdatePlanningTagInput, type SnoozePlanningReminderInput, type StartTodoAgentInput, type StartTodoAgentResult, type TodoAgentSessionActivation, type TeamMemoryApiResult, type TeamMemoryDocument, type TeamMemoryRevision, type ChangelogEntry, type AgentPreset, type AgentPresetCreateInput, type AgentPresetUpdateInput, type AgentPresetImportResult } from '@profer/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, LARK_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, CHANGELOG_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, RECOMMENDATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AUTH_IPC_CHANNELS, SYNC_IPC_CHANNELS, TEAM_IPC_CHANNELS, SKILL_MARKETPLACE_IPC_CHANNELS, SKILL_MASTER_IPC_CHANNELS, GLOBAL_SKILL_IPC_CHANNELS, TEAM_FILE_IPC_CHANNELS, TEAM_MEMORY_IPC_CHANNELS, SSE_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, AGENT_PRESET_IPC_CHANNELS, type Todo, type CalendarEvent, type TodoListQuery, type CalendarEventListQuery, type PlanningGroup, type PlanningGroupScope, type PlanningTag, type PlanningReminder, type ActivePlanningReminder, type PlanningAgentOperation, type PlanningChange, type CreateTodoInput, type UpdateTodoInput, type CreateCalendarEventInput, type UpdateCalendarEventInput, type CreatePlanningGroupInput, type UpdatePlanningGroupInput, type CreatePlanningTagInput, type UpdatePlanningTagInput, type SnoozePlanningReminderInput, type StartTodoAgentInput, type StartTodoAgentResult, type TodoAgentSessionActivation, type TeamMemoryApiResult, type TeamMemoryDocument, type TeamMemoryRevision, type ChangelogEntry, type AgentPreset, type AgentPresetCreateInput, type AgentPresetUpdateInput, type AgentPresetImportResult } from '@profer/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SKIN_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, NOTIFICATION_SOUND_IPC_CHANNELS, DESKTOP_NOTIFICATION_IPC_CHANNELS } from '../types'
 import type { CustomNotificationSound } from '../types'
 import type { PresetReference, PresetReferenceReport, PresetScopeRebindResult, LarkCliStatus, LarkCliOperationResult, LarkLoginStartResult, LarkLoginEvent, LarkMcpCredentialsInput, LarkMcpSetupResult, LarkMcpStatus } from '@profer/shared'
@@ -718,6 +718,13 @@ export interface ElectronAPI {
 
   /** 中止 Agent 执行 */
   stopAgent: (sessionId: string) => Promise<void>
+  startGoal: (sessionId: string, goal: string) => Promise<import('@profer/shared').AgentGoalState>
+  getGoal: (sessionId: string) => Promise<import('@profer/shared').AgentGoalState | null>
+  pauseGoal: (sessionId: string) => Promise<import('@profer/shared').AgentGoalState>
+  resumeGoal: (sessionId: string) => Promise<import('@profer/shared').AgentGoalState>
+  stopGoal: (sessionId: string) => Promise<import('@profer/shared').AgentGoalState>
+  clearGoal: (sessionId: string) => Promise<void>
+  onGoalEvent: (callback: (event: import('@profer/shared').AgentGoalEvent) => void) => () => void
 
   /** 更新指定会话的队列自动发送开关 */
   updateAgentQueueAutoSend: (sessionId: string, enabled: boolean) => Promise<import('@profer/shared').AgentSessionMeta>
@@ -1424,6 +1431,10 @@ export interface ElectronAPI {
   runAutomationNow: (id: string) => Promise<void>
   /** 订阅任务列表变更事件 */
   onAutomationChanged: (callback: () => void) => () => void
+  listRecommendations: () => Promise<import('@profer/shared').Recommendation[]>
+  refreshRecommendations: () => Promise<import('@profer/shared').Recommendation[]>
+  respondToRecommendation: (input: import('@profer/shared').RecommendationFeedbackInput) => Promise<import('@profer/shared').Recommendation>
+  onRecommendationsChanged: (callback: () => void) => () => void
 
   // ===== 身份认证（Phase 1: 占位类型）=====
   auth: {
@@ -2326,6 +2337,17 @@ const electronAPI: ElectronAPI = {
 
   stopAgent: (sessionId: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.STOP_AGENT, sessionId)
+  },
+  startGoal: (sessionId: string, goal: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.START_GOAL, sessionId, goal),
+  getGoal: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_GOAL, sessionId),
+  pauseGoal: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.PAUSE_GOAL, sessionId),
+  resumeGoal: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.RESUME_GOAL, sessionId),
+  stopGoal: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.STOP_GOAL, sessionId),
+  clearGoal: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.CLEAR_GOAL, sessionId),
+  onGoalEvent: (callback: (event: import('@profer/shared').AgentGoalEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: import('@profer/shared').AgentGoalEvent) => callback(data)
+    ipcRenderer.on(AGENT_IPC_CHANNELS.GOAL_EVENT, listener)
+    return () => ipcRenderer.removeListener(AGENT_IPC_CHANNELS.GOAL_EVENT, listener)
   },
 
   updateAgentQueueAutoSend: (sessionId: string, enabled: boolean) => {
@@ -3411,6 +3433,14 @@ const electronAPI: ElectronAPI = {
     const listener = (): void => callback()
     ipcRenderer.on(AUTOMATION_IPC_CHANNELS.CHANGED, listener)
     return () => { ipcRenderer.removeListener(AUTOMATION_IPC_CHANNELS.CHANGED, listener) }
+  },
+  listRecommendations: () => ipcRenderer.invoke(RECOMMENDATION_IPC_CHANNELS.LIST),
+  refreshRecommendations: () => ipcRenderer.invoke(RECOMMENDATION_IPC_CHANNELS.REFRESH),
+  respondToRecommendation: (input: import('@profer/shared').RecommendationFeedbackInput) => ipcRenderer.invoke(RECOMMENDATION_IPC_CHANNELS.FEEDBACK, input),
+  onRecommendationsChanged: (callback: () => void) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(RECOMMENDATION_IPC_CHANNELS.CHANGED, listener)
+    return () => { ipcRenderer.removeListener(RECOMMENDATION_IPC_CHANNELS.CHANGED, listener) }
   },
 
   // ===== 身份认证（Phase 1: 占位）=====

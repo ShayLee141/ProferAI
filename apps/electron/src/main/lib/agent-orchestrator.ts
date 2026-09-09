@@ -1146,6 +1146,7 @@ export class AgentOrchestrator {
         currentPresetReference,
         {
           permissionMode: input.permissionModeOverride,
+          triggeredBy: input.triggeredBy === 'goal' ? 'goal' : undefined,
           pptCapabilityActive,
           runtimeSupportsSubagents: this.adapter.getRuntimeCapabilities?.(agentRuntime)?.runtimeSupportsSubagents
             ?? this.adapter.getCapabilities?.().runtimeSupportsSubagents

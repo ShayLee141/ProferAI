@@ -58,12 +58,9 @@ function GlobalPresetDetail({ preset, onOpenChange, onChanged }: { preset: Agent
     const replacement = candidates.find((candidate) => candidate.id === replacementId)
     if (!replacement) { toast.error('请选择有效的替代预设'); return }
     const next = referenceFor(replacement)
+    if (!reference) return
     void mutate(async () => {
-      for (const entry of scope.references) {
-        if (entry.reason === 'workspace-default') await window.electronAPI.setDefaultAgentPresetReference(scope.workspaceSlug, next)
-        else if (entry.reason === 'session') await Promise.all(entry.objectIds.map((id) => window.electronAPI.rebindAgentSessionPresetReference(id, next)))
-        else if (entry.reason === 'automation') await Promise.all(entry.objectIds.map((id) => window.electronAPI.rebindAutomationPresetReference(id, next)))
-      }
+      await window.electronAPI.rebindAndDisableGlobalPresetScope(scope.workspaceSlug, reference, next)
     }, '已改绑并移除该工作区范围')
     setRemovingWorkspaceSlug(null)
   }

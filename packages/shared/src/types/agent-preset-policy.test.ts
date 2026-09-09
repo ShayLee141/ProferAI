@@ -7,6 +7,7 @@ import {
   isEffectiveAgentPresetToolDisabled,
   isEffectiveAgentPresetToolGroupDisabled,
   withLoadedMcpServerNames,
+  resolveEffectivePermissionMode,
 } from './agent-preset-policy'
 import type { AgentPreset } from './agent-preset'
 
@@ -27,6 +28,25 @@ function preset(overrides: Partial<AgentPreset> = {}): AgentPreset {
 }
 
 describe('EffectiveAgentPresetPolicy', () => {
+  test('外部 override 只能保持或收紧预设权限，不能静默升级', () => {
+    expect(resolveEffectivePermissionMode('plan', 'bypassPermissions')).toBe('plan')
+    expect(resolveEffectivePermissionMode('auto', 'bypassPermissions')).toBe('auto')
+    expect(resolveEffectivePermissionMode('bypassPermissions', 'plan')).toBe('plan')
+    expect(resolveEffectivePermissionMode('bypassPermissions', 'auto')).toBe('auto')
+    expect(resolveEffectivePermissionMode('plan', 'auto')).toBe('plan')
+  })
+
+  test('Goal 入口固定使用 bypassPermissions，不受预设 plan/auto 限制', () => {
+    expect(createEffectiveAgentPresetPolicy(preset({ permissionMode: 'plan' }), reference, {
+      permissionMode: 'bypassPermissions',
+      triggeredBy: 'goal',
+    }).permissionMode).toBe('bypassPermissions')
+    expect(createEffectiveAgentPresetPolicy(preset({ permissionMode: 'auto' }), reference, {
+      permissionMode: 'bypassPermissions',
+      triggeredBy: 'goal',
+    }).permissionMode).toBe('bypassPermissions')
+  })
+
   test('normalizes group policy and maps allowSubagents=false to collaboration', () => {
     const policy = createEffectiveAgentPresetPolicy(
       preset({ disabledToolGroups: ['browser'], allowSubagents: false }),

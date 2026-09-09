@@ -3,7 +3,7 @@ import { injectCodexFastMode, withCodexFastModeServiceTier } from './pi-codex-fa
 import { injectOpenAIThinkingLevel, injectDeepSeekV4ThinkingSettings } from './pi-codex-request-settings'
 
 describe('Pi Codex Fast Mode', () => {
-  test.each(['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])(
+  test.each(['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])(
     'Given supported %s When injecting Then requests priority tier',
     (model) => {
       expect(injectCodexFastMode({ model })).toEqual({ model, service_tier: 'priority' })
@@ -46,6 +46,11 @@ describe('Pi Codex Thinking Level', () => {
   ] as const)('Given thinkingLevel=%s When 注入 Then reasoning.effort=%s', (level, expectedEffort) => {
     const result = injectOpenAIThinkingLevel({ model: 'gpt-5.6-terra' }, level) as Record<string, unknown>
     expect(result.reasoning).toEqual({ effort: expectedEffort, summary: 'detailed' })
+  })
+
+  test('Given GPT-6 Astra 不支持关闭推理 When thinkingLevel=off Then 使用 low', () => {
+    const result = injectOpenAIThinkingLevel({ model: 'gpt-6-astra' }, 'off') as Record<string, unknown>
+    expect(result.reasoning).toEqual({ effort: 'low', summary: 'detailed' })
   })
 
   test('Given 推理关闭 + Codex 模型 Then 显式写入 none（GPT-5.x 默认 medium）', () => {

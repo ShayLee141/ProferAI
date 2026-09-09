@@ -20,20 +20,7 @@ import ClaudeDarkLogo from '@/assets/models/claude_dark.png'
 
 // OpenAI / GPT 系列
 import OpenAILogo from '@/assets/models/openai.png'
-import GPT4Logo from '@/assets/models/gpt_4.png'
-import GPT35Logo from '@/assets/models/gpt_3.5.png'
 import GPTDarkLogo from '@/assets/models/gpt_dark.png'
-import GPTo1Logo from '@/assets/models/gpt_o1.png'
-import GPTImageLogo from '@/assets/models/gpt_image_1.png'
-import GPT5Logo from '@/assets/models/gpt-5.png'
-import GPT5ChatLogo from '@/assets/models/gpt-5-chat.png'
-import GPT5MiniLogo from '@/assets/models/gpt-5-mini.png'
-import GPT5NanoLogo from '@/assets/models/gpt-5-nano.png'
-import GPT5CodexLogo from '@/assets/models/gpt-5-codex.png'
-import GPT51Logo from '@/assets/models/gpt-5.1.png'
-import GPT51ChatLogo from '@/assets/models/gpt-5.1-chat.png'
-import GPT51CodexLogo from '@/assets/models/gpt-5.1-codex.png'
-import GPT51CodexMiniLogo from '@/assets/models/gpt-5.1-codex-mini.png'
 
 // DeepSeek
 import DeepSeekLogo from '@/assets/models/deepseek.png'
@@ -134,22 +121,23 @@ import type { ProviderType } from '@profer/shared'
  */
 const MODEL_LOGO_MAP: Record<string, string> = {
   // === GPT 系列（具体型号优先） ===
-  'gpt-image': GPTImageLogo,
-  'gpt-3': GPT35Logo,
-  'gpt-4': GPT4Logo,
-  o1: GPTo1Logo,
-  o3: GPTo1Logo,
-  o4: GPTo1Logo,
-  'gpt-5-mini': GPT5MiniLogo,
-  'gpt-5-nano': GPT5NanoLogo,
-  'gpt-5-chat': GPT5ChatLogo,
-  'gpt-5-codex': GPT5CodexLogo,
-  'gpt-5\\.1-codex-mini': GPT51CodexMiniLogo,
-  'gpt-5\\.1-codex': GPT51CodexLogo,
-  'gpt-5\\.1-chat': GPT51ChatLogo,
-  'gpt-5\\.1': GPT51Logo,
-  'gpt-5': GPT5Logo,
-  gpts: GPT4Logo,
+  'gpt-image': OpenAILogo,
+  'gpt-3': OpenAILogo,
+  'gpt-4': OpenAILogo,
+  o1: OpenAILogo,
+  o3: OpenAILogo,
+  o4: OpenAILogo,
+  'gpt-6-astra': OpenAILogo,
+  'gpt-5-mini': OpenAILogo,
+  'gpt-5-nano': OpenAILogo,
+  'gpt-5-chat': OpenAILogo,
+  'gpt-5-codex': OpenAILogo,
+  'gpt-5\\.1-codex-mini': OpenAILogo,
+  'gpt-5\\.1-codex': OpenAILogo,
+  'gpt-5\\.1-chat': OpenAILogo,
+  'gpt-5\\.1': OpenAILogo,
+  'gpt-5': OpenAILogo,
+  gpts: OpenAILogo,
 
   // === Claude / Anthropic ===
   '(claude|anthropic-)': ClaudeLogo,

@@ -18,6 +18,7 @@ import { BrowserWindow } from 'electron'
 import {
   AUTOMATION_MAX_CONSECUTIVE_FAILURES,
   AUTOMATION_IPC_CHANNELS,
+  RECOMMENDATION_IPC_CHANNELS,
   AUTOMATION_DEFAULT_SESSION_MODE,
   type AgentRuntime,
   type Automation,
@@ -104,6 +105,7 @@ export function broadcastChanged(): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send(AUTOMATION_IPC_CHANNELS.CHANGED)
+      win.webContents.send(RECOMMENDATION_IPC_CHANNELS.CHANGED)
     }
   }
 }

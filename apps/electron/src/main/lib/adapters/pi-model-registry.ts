@@ -58,6 +58,7 @@ const CODEX_54_MINI_CONTEXT_WINDOW = 400_000
 const CODEX_56_CONTEXT_WINDOW = 1_050_000
 const CODEX_THINKING_LEVEL_MAP = { xhigh: 'xhigh', minimal: 'low' } as const
 const OFFICIAL_GPT_56_MODEL_IDS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+const GPT_6_ASTRA_MODEL_ID = 'gpt-6-astra'
 
 /** Pi 内置 OpenAI/Codex catalog 当前把这三个已验证 SKU 误标为 272K。 */
 function resolveVerifiedGpt56ContextWindow(modelId?: string): number | undefined {
@@ -74,6 +75,19 @@ function applyVerifiedGpt56ContextWindow(model: PiCatalogModel): PiCatalogModel 
 }
 
 const CODEX_MODEL_PATCHES: PiCatalogModelPatch[] = [
+  {
+    id: GPT_6_ASTRA_MODEL_ID,
+    name: 'GPT-6 Astra',
+    api: 'openai-responses',
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    reasoning: true,
+    thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    input: ['text', 'image'],
+    cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+  },
   {
     id: 'gpt-5.4',
     contextWindow: CODEX_56_CONTEXT_WINDOW,
@@ -316,6 +330,10 @@ async function resolvePiModelDefaults(input: PiAgentQueryOptions, explicit1MCont
     && isOfficialManagedChannel({ id: input.channelId })
     && modelId != null
     && OFFICIAL_GPT_56_MODEL_IDS.has(modelId)
+  const isOfficialGpt6Astra = input.provider === 'openai'
+    && input.channelId != null
+    && isOfficialManagedChannel({ id: input.channelId })
+    && modelId === GPT_6_ASTRA_MODEL_ID
   const isDeepSeekV4 = isDeepSeekV4Model(input.model)
   const isGlm53 = modelId === 'glm-5.3'
   const isVolcengineGlm5x = (input.provider === 'doubao' || input.provider === 'ark-coding-plan') && (modelId === 'glm-5.2' || modelId === 'glm-5.3')
@@ -328,7 +346,7 @@ async function resolvePiModelDefaults(input: PiAgentQueryOptions, explicit1MCont
     compat: providerSpecificCapabilities?.compat,
     input: catalogModel ? [...catalogModel.input] : ['text', 'image'],
     cost: catalogModel ? { ...catalogModel.cost } : { ...ZERO_MODEL_COST },
-    contextWindow: isOfficialGpt56
+    contextWindow: isOfficialGpt56 || isOfficialGpt6Astra
       ? CODEX_56_CONTEXT_WINDOW
       : isGlm53
         ? Math.max(catalogContextWindow ?? DEFAULT_CONTEXT_WINDOW, ONE_MILLION_CONTEXT_WINDOW)

@@ -252,9 +252,9 @@ export class OpenAIResponsesAdapter implements ProviderAdapter {
       bodyObj.tools = toResponsesTools(input.tools)
     }
 
-    // xAI Responses 使用与 OpenAI 相同的 reasoning 对象；Chat 当前只有思考开关，
-    // 统一选择 medium，避免把订阅 OAuth 或其他 provider 专用字段带入请求。
-    if (this.providerType === 'xai' && input.thinkingEnabled) {
+    // xAI Chat 与 GPT-6 Astra 都使用 Responses reasoning；Chat 当前只有思考开关。
+    // Astra 不支持 none/minimal，因此关闭思考时也不发送 reasoning，交由服务端默认值处理。
+    if (input.thinkingEnabled && (this.providerType === 'xai' || input.modelId === 'gpt-6-astra')) {
       bodyObj.reasoning = { effort: 'medium' }
     }
 

@@ -12,7 +12,7 @@ import { writeFile } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, LARK_IPC_CHANNELS, AGENT_PRESET_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AUTH_IPC_CHANNELS, SYNC_IPC_CHANNELS, TEAM_IPC_CHANNELS, SKILL_MARKETPLACE_IPC_CHANNELS, SKILL_MASTER_IPC_CHANNELS, GLOBAL_SKILL_IPC_CHANNELS, TEAM_FILE_IPC_CHANNELS, TEAM_MEMORY_IPC_CHANNELS, isAgentRuntime, isProferPermissionMode, normalizePathForCompare, DEFAULT_PRESET_ID, type AgentThinkingLevel, PLANNING_CONFLICT_ERROR, type Todo, type TodoListQuery, type CalendarEvent, type CalendarEventListQuery, type CreateTodoInput, type UpdateTodoInput, type CreateCalendarEventInput, type UpdateCalendarEventInput, type StartTodoAgentInput, type StartTodoAgentResult, type CreatePlanningGroupInput, type UpdatePlanningGroupInput, type PlanningGroup, type PlanningGroupScope, type PlanningTag, type PlanningReminder, type ActivePlanningReminder, type SnoozePlanningReminderInput, type TodoAgentSessionActivation, type ProviderType, type ReasoningCapability, type AgentPreset, type AgentPresetCreateInput, type AgentPresetUpdateInput, type AgentPresetImportResult, type OtherWorkspacePresetsGroup, type PresetReference, type PresetReferenceReport, type PresetScopeRebindResult } from '@profer/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, LARK_IPC_CHANNELS, AGENT_PRESET_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, RECOMMENDATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AUTH_IPC_CHANNELS, SYNC_IPC_CHANNELS, TEAM_IPC_CHANNELS, SKILL_MARKETPLACE_IPC_CHANNELS, SKILL_MASTER_IPC_CHANNELS, GLOBAL_SKILL_IPC_CHANNELS, TEAM_FILE_IPC_CHANNELS, TEAM_MEMORY_IPC_CHANNELS, isAgentRuntime, isProferPermissionMode, normalizePathForCompare, DEFAULT_PRESET_ID, type AgentThinkingLevel, PLANNING_CONFLICT_ERROR, type Todo, type TodoListQuery, type CalendarEvent, type CalendarEventListQuery, type CreateTodoInput, type UpdateTodoInput, type CreateCalendarEventInput, type UpdateCalendarEventInput, type StartTodoAgentInput, type StartTodoAgentResult, type CreatePlanningGroupInput, type UpdatePlanningGroupInput, type PlanningGroup, type PlanningGroupScope, type PlanningTag, type PlanningReminder, type ActivePlanningReminder, type SnoozePlanningReminderInput, type TodoAgentSessionActivation, type ProviderType, type ReasoningCapability, type AgentPreset, type AgentPresetCreateInput, type AgentPresetUpdateInput, type AgentPresetImportResult, type OtherWorkspacePresetsGroup, type PresetReference, type PresetReferenceReport, type PresetScopeRebindResult } from '@profer/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SKIN_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, NOTIFICATION_SOUND_IPC_CHANNELS, DESKTOP_NOTIFICATION_IPC_CHANNELS } from '../types'
 import type { CustomNotificationSound } from '../types'
 import { getBuildTarget } from './lib/build-target'
@@ -219,6 +219,8 @@ import {
   deleteAutomation,
 } from './lib/automation-manager'
 import { runAutomationNow, broadcastChanged as broadcastAutomationsChanged } from './lib/automation-scheduler'
+import { applyRecommendationFeedback, listRecommendations } from './lib/recommendation-manager'
+import { refreshAutomationRecommendations } from './lib/recommendation-engine'
 import {
   listPlanningGroups,
   createPlanningGroup,
@@ -268,6 +270,9 @@ import { runAgent, stopAgent, stopAgentAndWait, beginAgentSessionDeletion, endAg
 import { mapSdkShellTasks, isSameProcess, terminateProcessTreeGracefully, type MonitoredProcess } from './lib/process-monitor'
 import { listOwnedRuntimeProcesses, markOwnedRuntimeProcessExited, onRuntimeProcessRegistryChanged } from './lib/runtime-process-registry'
 import { coordinateAgentSend } from './lib/agent-send-coordinator'
+import { GoalController } from './lib/goal-controller'
+import { parseGoalIterationResult } from './lib/goal-loop'
+import type { AgentGoalState } from '@profer/shared'
 import { getAgentPresetByReference, presetReferenceForId } from './lib/agent-preset-manager'
 import { AgentSessionDeletionCoordinator } from './lib/agent-session-deletion'
 import { permissionService } from './lib/agent-permission-service'
@@ -400,6 +405,59 @@ const HIDDEN_FS_ENTRIES = new Set(['.DS_Store', 'Thumbs.db'])
 
 /** 同一会话的并发删除合并为一条 stop-and-wait 生命周期。 */
 const agentSessionDeletionCoordinator = new AgentSessionDeletionCoordinator()
+
+function collectGoalText(value: unknown, output: string[] = []): string[] {
+  if (typeof value === 'string') {
+    if (value.includes('<goal_result>')) output.push(value)
+    return output
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectGoalText(item, output)
+    return output
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) collectGoalText(item, output)
+  }
+  return output
+}
+
+const goalController = new GoalController({
+  runTurn: async ({ sessionId, goal, iteration, previousSummary }) => {
+    const session = getAgentSessionMeta(sessionId)
+    if (!session?.channelId) throw new Error('Goal 会话缺少渠道配置')
+    const prompt = [
+      `你正在持续执行 Goal。目标：${goal}`,
+      `这是第 ${iteration} 轮。`,
+      previousSummary ? `上一轮摘要：${previousSummary}` : '',
+      '请继续实际执行目标，不要只给建议。每轮结束时必须输出：<goal_result>{"status":"continue|complete|blocked","summary":"...","evidence":["..."]}</goal_result>。只有目标真正完成且提供验证证据时才使用 complete。',
+    ].filter(Boolean).join('\n')
+    const mainWindow = getMainWindow()
+    if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Profer 主窗口不可用，Goal 已停止')
+    await runAgent({
+      sessionId,
+      userMessage: prompt,
+      channelId: session.channelId,
+      modelId: session.modelId,
+      workspaceId: session.workspaceId,
+      agentRuntime: session.agentRuntime,
+      permissionModeOverride: 'bypassPermissions',
+      triggeredBy: 'goal',
+    }, mainWindow.webContents)
+    const messages = getAgentSessionSDKMessages(sessionId)
+    const goalText = collectGoalText(messages).join('\n')
+    return parseGoalIterationResult(goalText)
+  },
+  stopTurn: (sessionId) => stopAgentAndWait(sessionId),
+  onStateChange: (state) => {
+    const event = { sessionId: state.sessionId, state }
+    getMainWindow()?.webContents.send(AGENT_IPC_CHANNELS.GOAL_EVENT, event)
+  },
+})
+
+/** 应用进程退出前停止所有 Goal，不保留后台循环。 */
+export function stopAllGoalsForProcessExit(): void {
+  goalController.stopAll()
+}
 
 /** 已知编辑器应用名称白名单（macOS） */
 const KNOWN_EDITORS = [
@@ -3615,6 +3673,32 @@ export function registerIpcHandlers(): void {
   // 中止 Agent 执行。必须等待底层 run 的 finally 完成后才向渲染层返回，
   // 否则用户刚点击「停止」就发送下一条消息时，编排器仍持有 active session，
   // 新消息会被并发保护拒绝，造成必须重复发送一次的体验问题。
+  ipcMain.handle(AGENT_IPC_CHANNELS.START_GOAL, async (event, sessionId: string, goal: string): Promise<AgentGoalState> => {
+    assertSensitiveAgentIpcSender(event)
+    if (typeof sessionId !== 'string' || typeof goal !== 'string' || !goal.trim()) throw new Error('Goal 不能为空')
+    return goalController.start(sessionId, goal)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_GOAL, async (event, sessionId: string): Promise<AgentGoalState | null> => {
+    assertSensitiveAgentIpcSender(event)
+    return goalController.get(sessionId) ?? null
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.PAUSE_GOAL, async (event, sessionId: string): Promise<AgentGoalState> => {
+    assertSensitiveAgentIpcSender(event)
+    return goalController.pause(sessionId)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.RESUME_GOAL, async (event, sessionId: string): Promise<AgentGoalState> => {
+    assertSensitiveAgentIpcSender(event)
+    return goalController.resume(sessionId)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.STOP_GOAL, async (event, sessionId: string): Promise<AgentGoalState> => {
+    assertSensitiveAgentIpcSender(event)
+    return goalController.stop(sessionId)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.CLEAR_GOAL, async (event, sessionId: string): Promise<void> => {
+    assertSensitiveAgentIpcSender(event)
+    goalController.clear(sessionId)
+  })
+
   ipcMain.handle(
     AGENT_IPC_CHANNELS.STOP_AGENT,
     async (event, sessionId: string): Promise<void> => {
@@ -6596,6 +6680,18 @@ export function registerIpcHandlers(): void {
     }
     validateAutomationNotificationTargets(i.notificationTargets)
   }
+
+  ipcMain.handle(RECOMMENDATION_IPC_CHANNELS.LIST, async () => listRecommendations())
+  ipcMain.handle(RECOMMENDATION_IPC_CHANNELS.REFRESH, async () => {
+    refreshAutomationRecommendations(listAutomations())
+    return listRecommendations()
+  })
+  ipcMain.handle(RECOMMENDATION_IPC_CHANNELS.FEEDBACK, async (_, input) => {
+    if (!input || typeof input.id !== 'string' || !['accepted', 'dismissed', 'snoozed'].includes(input.status)) throw new Error('无效的推荐反馈')
+    const result = applyRecommendationFeedback(input)
+    if (!result) throw new Error('推荐不存在')
+    return result
+  })
 
   ipcMain.handle(
     AUTOMATION_IPC_CHANNELS.LIST,
