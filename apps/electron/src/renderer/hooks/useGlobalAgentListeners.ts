@@ -8,6 +8,7 @@
  */
 
 import { useEffect } from 'react'
+import { agentGoalsAtom } from '@/atoms/goal-atoms'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useStore } from 'jotai'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
@@ -75,7 +76,7 @@ import { getAgentCompletionMarkers } from '@/lib/agent-completion-presence'
 import { getPlanModeChangeFromToolName, updatePlanModeSessionSet } from '@/lib/agent-plan-mode'
 import { getSessionFileChangeKind, upsertSessionFileChange } from '@/lib/session-file-changes'
 import { compactCompletedBackgroundStreamState, isCurrentAgentStreamCompletion, settleCompletedAgentStreamState } from '@/lib/agent-stream-state-cleanup'
-import { isAbsoluteFilePath, resolveRelativeToAbsolute } from '@/lib/file-utils'
+import { isAbsoluteFilePath } from '@/lib/file-utils'
 import { inspectOfficialPptxPreview } from '@/components/file-browser/office-preview/official-preview-session'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
@@ -352,6 +353,16 @@ export function useGlobalAgentListeners(): void {
   const store = useStore()
 
   useEffect(() => {
+    let effectActive = true
+    const cleanupGoal = window.electronAPI.onGoalEvent((event) => {
+      store.set(agentGoalsAtom, (previous) => {
+        const next = new Map(previous)
+        if (event.state) next.set(event.sessionId, event.state)
+        else next.delete(event.sessionId)
+        return next
+      })
+    })
+
     /** 正在执行的写工具：toolUseId → { path, sessionId, toolName, runId } */
     const pendingWriteTools = new Map<string, { path: string; sessionId: string; toolName: string; runId: string }>()
     /** 正在执行的 git 突变 Bash 命令：toolUseId → sessionId（完成后触发 diff 刷新） */
@@ -555,33 +566,12 @@ export function useGlobalAgentListeners(): void {
         }
       }
 
-      // 检查文件是否落在当前会话的 diff scope 内（与 getUnstagedChanges 的 candidates 对齐）
-      // 注：未纳入 dirPath，因为 DiffChangesList 调用时 dirPath 始终等于 sessionPath
-      // 路径分隔符统一为正斜杠，避免 Windows 下 client 与服务端（path.sep='\\'）方向不一致导致反向错配
-      const toForwardSlash = (p: string) => p.replace(/\\/g, '/')
-      const sessionScopePaths = uniqueTruthyPaths([
-        sessionPath,
-        workspaceFilesPath,
-        ...sessionAttachedDirs,
-        ...workspaceAttachedDirs,
-      ]).map(toForwardSlash)
-      // 相对路径统一走 renderer/lib 公共拼接（R4）：优先首段匹配候选 base 目录名，
-      // 修复「相对路径首段 == 会话目录名」时多套一层目录导致 diff scope 误判的问题
-      const absTarget = toForwardSlash(
-        isAbsoluteFilePath(targetPath)
-          ? targetPath
-          : resolveRelativeToAbsolute(targetPath, sessionPath ? [sessionPath] : [])
-      )
-      const inDiffScope = sessionScopePaths.some((root) => {
-        const r = root.replace(/\/+$/, '') + '/'
-        return absTarget === root || absTarget.startsWith(r)
-      })
-
+      // Agent 实际写入的外部文件也必须进入改动记录；会话附件范围只用于
+      // 路径解析上下文，不应在这里再次把已完成的文件操作过滤掉。
       return {
         filePath: targetPath,
         dirPath: dirPath || undefined,
         previewOnly,
-        inDiffScope,
         basePaths: basePaths.length > 0 ? basePaths : undefined,
       }
     }
@@ -633,6 +623,7 @@ export function useGlobalAgentListeners(): void {
             const sequence = (autoPreviewSeq.get(sessionId) ?? 0) + 1
             autoPreviewSeq.set(sessionId, sequence)
             buildAutoPreviewFile(sessionId, previewPath).then((previewFile) => {
+              if (!effectActive) return
               if (!previewFile || autoPreviewSeq.get(sessionId) !== sequence) {
                 void window.electronAPI.reportAgentFilePreview({
                   requestId: proferEvent.requestId,
@@ -684,6 +675,7 @@ export function useGlobalAgentListeners(): void {
                 store.set(activeTabIdAtom, result.activeTabId)
               }
             }).catch((error: unknown) => {
+              if (!effectActive) return
               void window.electronAPI.reportAgentFilePreview({
                 requestId: proferEvent.requestId,
                 sessionId,
@@ -695,14 +687,19 @@ export function useGlobalAgentListeners(): void {
             })
           } else if (proferEvent.type === 'preview_inspection_requested' && proferEvent.request.sessionId === sessionId) {
             void inspectOfficialPptxPreview(proferEvent.request)
-              .then((result) => window.electronAPI.reportAgentFilePreviewInspection(result))
-              .catch((error: unknown) => window.electronAPI.reportAgentFilePreviewInspection({
+              .then((result) => {
+                if (effectActive) void window.electronAPI.reportAgentFilePreviewInspection(result)
+              })
+              .catch((error: unknown) => {
+                if (!effectActive) return
+                return window.electronAPI.reportAgentFilePreviewInspection({
                 ...proferEvent.request,
                 slideCount: 0,
                 currentSlide: 1,
                 images: [],
                 error: error instanceof Error ? error.message : '正式 PPTX 预览观察失败',
-              }))
+                })
+              })
           } else if (proferEvent.type === 'image_generation_updated' && proferEvent.sessionId === sessionId && proferEvent.record.sessionId === sessionId) {
             // Card events are independent timeline updates; never let them fabricate an Agent
             // running state through legacy event conversion or cross-session cache pollution.
@@ -964,7 +961,7 @@ export function useGlobalAgentListeners(): void {
                   : buildAutoPreviewFile(sessionId, writtenPath)
 
                 previewPromise.then((previewFile) => {
-                  if (!previewFile || previewFile.previewOnly || !previewFile.inDiffScope) return
+                  if (!previewFile || previewFile.previewOnly) return
 
                   store.set(agentDiffUnseenChangesAtom, (prev) => {
                     const m = new Map(prev); m.set(sessionId, true); return m
@@ -1543,6 +1540,8 @@ export function useGlobalAgentListeners(): void {
     window.addEventListener('focus', onWindowFocus)
 
     return () => {
+      effectActive = false
+      cleanupGoal()
       cleanupEvent()
       cleanupComplete()
       cleanupError()

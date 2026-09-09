@@ -32,11 +32,12 @@ export function GlobalPresetScopePanel({ preset }: Props): React.ReactElement {
   const [candidates, setCandidates] = React.useState<Record<string, AgentPreset[]>>({})
   const [candidateLoading, setCandidateLoading] = React.useState<Set<string>>(new Set())
 
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (isCurrent: () => boolean = () => true) => {
     const [nextReport, listed] = await Promise.all([
       window.electronAPI.getPresetReferenceReport(ref(preset)),
       window.electronAPI.listAgentWorkspaces(),
     ])
+    if (!isCurrent()) return
     setReport(nextReport)
     setWorkspaces(listed.filter((workspace) => !workspace.isDeleted))
     setSelected(new Set(nextReport.workspaceScopes.map((scope) => scope.workspaceSlug)))
@@ -44,7 +45,13 @@ export function GlobalPresetScopePanel({ preset }: Props): React.ReactElement {
     setCandidates({})
   }, [preset.id, preset.scope])
 
-  React.useEffect(() => { void load().catch((error) => toast.error(error instanceof Error ? error.message : '读取工作区范围失败')) }, [load])
+  React.useEffect(() => {
+    let cancelled = false
+    void load(() => !cancelled).catch((error) => {
+      if (!cancelled) toast.error(error instanceof Error ? error.message : '读取工作区范围失败')
+    })
+    return () => { cancelled = true }
+  }, [load])
 
   const rows = React.useMemo(() => {
     const names = new Map(workspaces.map((workspace) => [workspace.slug, workspace.name]))

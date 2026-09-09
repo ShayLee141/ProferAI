@@ -320,7 +320,12 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       savedAttachments = []
       for (const att of currentAttachments) {
         const base64Data = window.__pendingAttachmentData?.get(att.id)
-        if (!base64Data) continue
+        if (!base64Data) {
+          const errorMessage = `附件「${att.filename}」数据已丢失，请重新添加后再发送`
+          setChatStreamErrors((prev) => new Map(prev).set(conversationId, errorMessage))
+          toast.error(errorMessage)
+          return
+        }
 
         try {
           const input: AttachmentSaveInput = {
@@ -333,6 +338,10 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
           savedAttachments.push(result.attachment)
         } catch (error) {
           console.error('[ChatView] 保存附件失败:', error)
+          const errorMessage = `附件「${att.filename}」保存失败，请重试`
+          setChatStreamErrors((prev) => new Map(prev).set(conversationId, errorMessage))
+          toast.error(errorMessage)
+          return
         }
       }
 
@@ -391,11 +400,12 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
 
     // 优化更新：立即在 UI 中显示用户消息。
     // 重发场景下 forkBranchAt 已经把新 user 节点写入并 refresh 到本地，这里不能再乐观插入一条重复的 temp 消息。
-    if (!options?.pendingUserMessageId) {
+    const optimisticMessageId = options?.pendingUserMessageId ? null : `temp-${Date.now()}`
+    if (optimisticMessageId) {
       setMessages((prev) => [
         ...prev,
         {
-          id: `temp-${Date.now()}`,
+          id: optimisticMessageId,
           parentId: prev.length > 0 ? prev[prev.length - 1]!.id : null,
           role: 'user',
           content,
@@ -415,6 +425,12 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
         map.delete(conversationId)
         return map
       })
+      if (optimisticMessageId) {
+        setMessages((prev) => prev.filter((message) => message.id !== optimisticMessageId))
+      }
+      const errorMessage = error instanceof Error ? error.message : '消息发送失败，请重试'
+      setChatStreamErrors((prev) => new Map(prev).set(conversationId, errorMessage))
+      toast.error(errorMessage)
     })
   }, [
     conversationId,
@@ -590,13 +606,19 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
   }, [])
 
   /** 提交原地编辑：在该消息的兄弟位置 fork 一条新内容并触发重发 */
+  const inlineEditSubmitRef = React.useRef(false)
+
   const handleSubmitInlineEdit = React.useCallback(async (
     message: { id: string; content: string },
     payload: InlineEditSubmitPayload,
   ): Promise<void> => {
-    if (isStreaming) return
+    if (isStreaming || inlineEditSubmitRef.current) return
+    inlineEditSubmitRef.current = true
     const trimmed = payload.content.trim()
-    if (!trimmed && payload.keepExistingAttachments.length === 0 && payload.newAttachments.length === 0) return
+    if (!trimmed && payload.keepExistingAttachments.length === 0 && payload.newAttachments.length === 0) {
+      inlineEditSubmitRef.current = false
+      return
+    }
 
     try {
       const forked = await forkFromMessage(message.id, {
@@ -608,7 +630,12 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
         (att) => !keepLocalPathSet.has(att.localPath),
       )
       for (const removed of removedOldAttachments) {
-        await window.electronAPI.deleteAttachment(removed.localPath)
+        try {
+          await window.electronAPI.deleteAttachment(removed.localPath)
+        } catch (error) {
+          // 删除旧附件失败不应阻断新分支发送；保留文件比丢失编辑更安全。
+          console.warn('[ChatView] 删除旧附件失败，保留文件:', removed.localPath, error)
+        }
       }
 
       const newSavedAttachments: FileAttachment[] = []
@@ -633,6 +660,8 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
       setInlineEditingMessageId(null)
     } catch (error) {
       console.error('[ChatView] 原地编辑重发失败:', error)
+    } finally {
+      inlineEditSubmitRef.current = false
     }
   }, [conversationId, isStreaming, forkFromMessage, handleSend])
 

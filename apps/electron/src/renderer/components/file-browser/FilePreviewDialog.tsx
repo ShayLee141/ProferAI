@@ -76,7 +76,7 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
     setResolvedPath(null)
     setImageZoom(1)
     loadPreview()
-  }, [open, filePath]) // eslint-disable-line
+  }, [open, filePath, fileName])
 
   // 原生 non-passive 监听器确保 Electron 中可阻止默认滚动，并允许在预览区域任意位置缩放。
   React.useEffect(() => {

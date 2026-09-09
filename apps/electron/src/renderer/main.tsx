@@ -678,7 +678,16 @@ function FeishuInitializer(): null {
 
   useEffect(() => {
     // 加载初始多 Bot 状态
-    window.electronAPI.getFeishuMultiStatus?.()
+    const loadFeishuMultiStatus = window.electronAPI.getFeishuMultiStatus
+    if (!loadFeishuMultiStatus) {
+      window.electronAPI.getFeishuStatus()
+        .then((state: FeishuBridgeState) => {
+          const s = state as FeishuBotBridgeState
+          const botId = s.botId ?? 'default'
+          store.set(feishuBotStatesAtom, { [botId]: { ...s, botId, botName: s.botName ?? '飞书助手' } })
+        })
+        .catch((err: unknown) => console.error('[FeishuInitializer] 加载状态失败:', err))
+    } else loadFeishuMultiStatus()
       .then((multiState: { bots: Record<string, FeishuBotBridgeState> }) => {
         store.set(feishuBotStatesAtom, multiState.bots)
       })
@@ -737,7 +746,16 @@ function DingTalkInitializer(): null {
 
   useEffect(() => {
     // 加载初始多 Bot 状态
-    window.electronAPI.getDingTalkMultiStatus?.()
+    const loadDingTalkMultiStatus = window.electronAPI.getDingTalkMultiStatus
+    if (!loadDingTalkMultiStatus) {
+      window.electronAPI.getDingTalkStatus()
+        .then((state: DingTalkBridgeState) => {
+          const s = state as DingTalkBotBridgeState
+          const botId = s.botId ?? 'default'
+          store.set(dingtalkBotStatesAtom, { [botId]: { ...s, botId, botName: s.botName ?? '钉钉助手' } })
+        })
+        .catch((err: unknown) => console.error('[DingTalkInitializer] 加载状态失败:', err))
+    } else loadDingTalkMultiStatus()
       .then((multiState: { bots: Record<string, DingTalkBotBridgeState> }) => {
         store.set(dingtalkBotStatesAtom, multiState.bots)
       })

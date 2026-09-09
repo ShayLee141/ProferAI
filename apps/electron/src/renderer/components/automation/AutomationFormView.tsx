@@ -269,6 +269,7 @@ export function AutomationFormView(): React.ReactElement | null {
   const [feishuBindings, setFeishuBindings] = React.useState<FeishuChatBinding[]>([])
   const [presets, setPresets] = React.useState<AgentPreset[]>([])
   const [defaultPresetId, setDefaultPresetId] = React.useState<string>(DEFAULT_PRESET_ID)
+  const presetRequestIdRef = React.useRef(0)
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>('idle')
   const [lastSavedAt, setLastSavedAt] = React.useState<number | null>(null)
   const nameInputRef = React.useRef<HTMLInputElement>(null)
@@ -320,16 +321,23 @@ export function AutomationFormView(): React.ReactElement | null {
   // 预设为工作区级配置：任务所选工作区变化时重拉该工作区的预设列表（内置 + 自定义）
   React.useEffect(() => {
     if (!formState.open) return
+    const requestId = ++presetRequestIdRef.current
     const workspaceSlug = workspaces.find((ws) => ws.id === form?.workspaceId)?.slug
     window.electronAPI.listAgentPresets(workspaceSlug)
-      .then(setPresets)
+      .then((list) => {
+        if (requestId === presetRequestIdRef.current) setPresets(list)
+      })
       .catch((err: unknown) => {
+        if (requestId !== presetRequestIdRef.current) return
         console.error('[定时任务] 获取工作区预设失败:', err)
         setPresets([])
       })
     window.electronAPI.getDefaultAgentPreset(workspaceSlug)
-      .then(setDefaultPresetId)
+      .then((presetId) => {
+        if (requestId === presetRequestIdRef.current) setDefaultPresetId(presetId)
+      })
       .catch((err: unknown) => {
+        if (requestId !== presetRequestIdRef.current) return
         console.error('[定时任务] 获取工作区默认预设失败:', err)
         setDefaultPresetId(DEFAULT_PRESET_ID)
       })

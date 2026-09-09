@@ -161,6 +161,9 @@ function TopHistoryLoader({
 
   React.useEffect(() => {
     if (!onLoadEarlierHistory) return
+    // 失败后允许用户仍停留在顶部时再次触发；成功后若仍有更早内容，
+    // 也会在布局更新后的下一次 scroll 事件中继续分页。
+    if (!historyLoadingEarlier && historyMoreAvailable !== false) armedRef.current = true
     const el = scrollRef.current
     if (!el) return
     const handleScroll = (): void => {

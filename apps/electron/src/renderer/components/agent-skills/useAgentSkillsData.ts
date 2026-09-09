@@ -50,8 +50,10 @@ export function useAgentSkillsData(): AgentSkillsData {
   const [mcpConfig, setMcpConfig] = React.useState<WorkspaceMcpConfig>({ servers: {} })
   const [updatingSkill, setUpdatingSkill] = React.useState<string | null>(null)
 
-  const loadData = React.useCallback(async () => {
+  const loadData = React.useCallback(async (isCurrent: () => boolean = () => true) => {
     if (!workspaceSlug) {
+      if (!isCurrent()) return
+
       setSkills([])
       setMcpConfig({ servers: {} })
       setLoading(false)
@@ -64,6 +66,7 @@ export function useAgentSkillsData(): AgentSkillsData {
         window.electronAPI.getWorkspaceSkillsDir(workspaceSlug),
         window.electronAPI.getDefaultSkillSlugs(),
       ])
+      if (!isCurrent()) return
       setMcpConfig(config)
       setSkills(skillList)
       setSkillsDir(dir)
@@ -71,14 +74,16 @@ export function useAgentSkillsData(): AgentSkillsData {
     } catch (error) {
       console.error('[Agent 技能] 加载工作区配置失败:', error)
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
   }, [workspaceSlug])
 
   // workspaceSlug 或外部能力版本变化时重新拉取
   React.useEffect(() => {
     // 保留现有列表，避免单个开关或其他能力变化导致整页白屏闪烁。
-    void loadData()
+    let cancelled = false
+    void loadData(() => !cancelled)
+    return () => { cancelled = true }
   }, [loadData, capabilitiesVersion])
 
   const toggleSkill = React.useCallback(async (slug: string, enabled: boolean, sourceSkillId?: string) => {

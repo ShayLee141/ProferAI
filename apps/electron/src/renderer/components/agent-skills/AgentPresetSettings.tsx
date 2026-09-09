@@ -330,6 +330,7 @@ export function AgentPresetSettings({
   // 导出/导入文件操作的结果提示（头部按钮下方展示，几秒后自动消失）
   const [fileNotice, setFileNotice] = React.useState("");
   const [fileBusy, setFileBusy] = React.useState(false);
+  const reloadRequestId = React.useRef(0);
   // 勾选面板数据源：当前工作区的 Skills 与 MCP 列表（打开对话框时拉取）
   const [availableSkills, setAvailableSkills] = React.useState<SkillMeta[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = React.useState<
@@ -398,24 +399,26 @@ export function AgentPresetSettings({
 
   const reload = React.useCallback(
     async (options?: { silent?: boolean }) => {
+      const requestId = ++reloadRequestId.current;
       if (!options?.silent) setLoading(true);
       try {
         const list = globalMode
           ? await window.electronAPI.listGlobalAgentPresets()
           : await window.electronAPI.listAgentPresets(workspaceSlug, true);
+        if (requestId !== reloadRequestId.current) return;
         if (globalMode) {
           setGlobalPresets(list);
           setDefaultPresetId("");
         } else {
+          const defaultId = await window.electronAPI.getDefaultAgentPreset(workspaceSlug);
+          if (requestId !== reloadRequestId.current) return;
           setWorkspacePresets(list);
-          setDefaultPresetId(
-            await window.electronAPI.getDefaultAgentPreset(workspaceSlug),
-          );
+          setDefaultPresetId(defaultId);
         }
       } catch (err) {
-        console.error("[预设设置] 加载失败:", err);
+        if (requestId === reloadRequestId.current) console.error("[预设设置] 加载失败:", err);
       } finally {
-        if (!options?.silent) setLoading(false);
+        if (!options?.silent && requestId === reloadRequestId.current) setLoading(false);
       }
     },
     [globalMode, setWorkspacePresets, workspaceSlug],

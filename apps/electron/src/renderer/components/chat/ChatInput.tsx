@@ -116,7 +116,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     stagedAttachmentDataRef.current.clear()
   }, [])
 
-  const canSend = (content.trim().length > 0 || pendingAttachments.length > 0) && selectedModel !== null && !streaming
+  const canSend = (content.trim().length > 0 || pendingAttachments.length > 0 || pendingKnowledgeReferences.length > 0) && selectedModel !== null && !streaming
 
   /**
    * 将文件列表添加为附件（race-free 去重）

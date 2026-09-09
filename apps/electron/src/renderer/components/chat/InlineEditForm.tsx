@@ -59,6 +59,7 @@ export function InlineEditForm({ message, onSubmit, onCancel }: InlineEditFormPr
   const [editingContent, setEditingContent] = React.useState(message.content ?? '')
   const [editableAttachments, setEditableAttachments] = React.useState<EditableAttachment[]>([])
   const [isDragOver, setIsDragOver] = React.useState(false)
+  const submittingRef = React.useRef(false)
 
   // 加载已有附件和图片预览
   React.useEffect(() => {
@@ -206,7 +207,8 @@ export function InlineEditForm({ message, onSubmit, onCancel }: InlineEditFormPr
   }), [editingContent, editableAttachments])
 
   const handleSubmit = React.useCallback((): void => {
-    if (!canSubmit) return
+    if (!canSubmit || submittingRef.current) return
+    submittingRef.current = true
     onSubmit(buildPayload())
   }, [canSubmit, onSubmit, buildPayload])
 

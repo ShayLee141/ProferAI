@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Sparkles, GitBranch } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
+import { GoalStatusBar } from './GoalStatusBar'
 import { ContextUsageBadge } from './ContextUsageBadge'
 import { resolvePlanQuotaChannelId } from './context-usage-badge-channel'
 import { supportsChannelPlanQuota } from '@/lib/channel-plan-quota'
@@ -128,18 +129,11 @@ const AGENT_REFRESH_HEADROOM = 100
 /** 内存缓存只保留尾部窗口，防止随用户加载更多历史无限膨胀 */
 const AGENT_CACHE_WINDOW = DESKTOP_AGENT_PAGE_SIZE + AGENT_REFRESH_HEADROOM
 
-/** 主进程分页返回结构（与 main 的 SDKMessagePage 一致） */
-interface SDKMessagePageLike {
-  messages: SDKMessage[]
-  total: number
-  startIndex: number
-  endIndex: number
-  hasMore: boolean
-}
 import { MAX_ATTACHMENT_SIZE } from '@profer/shared'
 import { fileToBase64, formatFileNames, getFileBaseName, getFileParentPath } from '@/lib/file-utils'
 import { createClipboardPendingFile, createClipboardTextDraft, makeUniqueAttachmentName } from '@/lib/clipboard-text-attachment'
 import { AgentMessageQueue } from './AgentMessageQueue'
+import { normalizeAgentHistoryResult } from './agent-history-pagination'
 import { clearSessionReferenceDragState, getSessionReferenceDragData, canReferenceDraggedSession } from '@/lib/session-reference-drag'
 import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
 import {
@@ -553,10 +547,12 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
       : { before: historyStartIndexRef.current, tail: DESKTOP_AGENT_PAGE_SIZE }
     ;(api.getAgentSessionSDKMessages?.(sessionId, opts) ?? Promise.resolve([]))
       .then((sdkMsgs) => {
-        // 兼容分页返回（{ messages, startIndex, hasMore, ... }）与纯数组
-        const isPage = !Array.isArray(sdkMsgs) && sdkMsgs !== null && typeof sdkMsgs === 'object' && 'messages' in (sdkMsgs as Record<string, unknown>)
-        const page = isPage ? (sdkMsgs as SDKMessagePageLike) : null
-        const earlier = isPage && page ? page.messages : (Array.isArray(sdkMsgs) ? (sdkMsgs as SDKMessage[]) : [])
+        const normalized = normalizeAgentHistoryResult(
+          sdkMsgs,
+          { startIndex: historyStartIndexRef.current, hasMore: historyHasMoreRef.current },
+          api.getSdkMessagesHasMore?.(sessionId),
+        )
+        const earlier = normalized.messages
         if (earlier.length > 0) {
           // 更早消息 prepend 到头部（保持已加载内容不变，从上方插入）
           const next = [...earlier, ...persistedSDKMessagesRef.current]
@@ -564,11 +560,10 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
           setPersistedSDKMessages(next)
           // 缓存保持尾部窗口（prepend 不污染：切回会话时默认只显示尾部，更早历史按需重拉）
         }
-        if (page) {
-          historyStartIndexRef.current = page.startIndex
-          const nextHasMore = page.hasMore
-          historyHasMoreRef.current = nextHasMore
-          setHistoryHasMore(nextHasMore)
+        if (normalized.isPage) {
+          historyStartIndexRef.current = normalized.cursor.startIndex
+          historyHasMoreRef.current = normalized.cursor.hasMore
+          setHistoryHasMore(normalized.cursor.hasMore)
         } else {
           // 平板 stub 路径：从 getSdkMessagesHasMore 读累计状态
           const more = api.getSdkMessagesHasMore?.(sessionId)
@@ -578,7 +573,9 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
         }
       })
       .catch(() => {
-        // 拉取失败：不阻断，暂不再次自动触发
+        // 失败后保持可重试；TopHistoryLoader 会在用户再次离开/回到顶部时重新触发。
+        historyHasMoreRef.current = true
+        setHistoryHasMore(true)
       })
       .finally(() => {
         historyPullInFlightRef.current = false
@@ -669,9 +666,9 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     [sessions, sessionId],
   )
   const hasSessionMeta = Boolean(sessionMeta)
-  // 1.6.2 每会话「队列自动发送」开关：权威来源是会话 meta（缺省关/重启保留）；map 仅为运行时缓存，
-  // 首次/切会话且 meta 有值时由下方 effect 填充。
-  const autoSendEnabled = useAtomValue(agentQueueAutoSendMapAtom).get(sessionId) ?? sessionMeta?.autoQueueSendEnabled ?? false
+  // 1.6.2 每会话「队列自动发送」开关：权威来源是会话 meta（缺省开/重启保留）；map 仅为运行时缓存，
+  // 首次/切会话且 meta 有值时由下方 effect 填充。用户手动关闭后会持久化为 false。
+  const autoSendEnabled = useAtomValue(agentQueueAutoSendMapAtom).get(sessionId) ?? sessionMeta?.autoQueueSendEnabled ?? true
   // 切会话/首次：map 无值且 meta 有值 → 从 meta 填充运行时缓存（每个会话独立记忆，不串）
   React.useEffect(() => {
     const metaValue = sessionMeta?.autoQueueSendEnabled
@@ -1186,10 +1183,12 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     loadPromise
       .then((sdkMsgs) => {
         if (cancelled) return
-        // 兼容分页返回（{ messages, startIndex, hasMore, ... }）与纯数组
-        const isPage = !Array.isArray(sdkMsgs) && sdkMsgs !== null && typeof sdkMsgs === 'object' && 'messages' in (sdkMsgs as Record<string, unknown>)
-        const page = isPage ? (sdkMsgs as SDKMessagePageLike) : null
-        const normalized: SDKMessage[] = isPage && page ? page.messages : (Array.isArray(sdkMsgs) ? (sdkMsgs as SDKMessage[]) : [])
+        const historyResult = normalizeAgentHistoryResult(
+          sdkMsgs,
+          { startIndex: historyStartIndexRef.current, hasMore: historyHasMoreRef.current },
+          (window.electronAPI as unknown as { getSdkMessagesHasMore?: (id: string) => boolean }).getSdkMessagesHasMore?.(sessionId),
+        )
+        const normalized: SDKMessage[] = historyResult.messages
         // 1.7.1：合并尚未持久化的乐观消息（按 uuid），避免队列自动发送的用户气泡被重载覆盖
         const persistedUuids = new Set(
           normalized.filter((m) => typeof (m as Record<string, unknown>).uuid === 'string')
@@ -1212,11 +1211,10 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
           setMessagesLoaded(true)
 
           // 桌面：从分页结果同步 hasMore；平板：从服务端读累计状态
-          if (isPage) {
-            const page = sdkMsgs as SDKMessagePageLike
-            historyStartIndexRef.current = page.startIndex
-            historyHasMoreRef.current = page.hasMore
-            setHistoryHasMore(page.hasMore)
+          if (historyResult.isPage) {
+            historyStartIndexRef.current = historyResult.cursor.startIndex
+            historyHasMoreRef.current = historyResult.cursor.hasMore
+            setHistoryHasMore(historyResult.cursor.hasMore)
           } else {
             const api = window.electronAPI as unknown as { getSdkMessagesHasMore?: (id: string) => boolean }
             const more = api.getSdkMessagesHasMore?.(sessionId)
@@ -2122,6 +2120,38 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   /** 发送消息 */
   const handleSend = React.useCallback(async (): Promise<void> => {
     const text = inputContent.trim()
+    const goalMatch = text.match(/^\/goal(?:\s+(.+))?$/i)
+    if (goalMatch) {
+      const command = goalMatch[1]?.trim() ?? ''
+      try {
+        const normalized = command.toLowerCase()
+        if (!command) throw new Error('请输入 Goal 目标，例如：/goal 完成登录页')
+        if (normalized === 'status') {
+          const state = await window.electronAPI.getGoal(sessionId)
+          toast.info(state ? `Goal：${state.status} · 第 ${state.iteration} 轮` : '当前会话没有 Goal', { description: state?.goal })
+        } else if (normalized === 'pause') {
+          await window.electronAPI.pauseGoal(sessionId)
+          toast.info('Goal 已暂停')
+        } else if (normalized === 'resume') {
+          await window.electronAPI.resumeGoal(sessionId)
+          toast.info('Goal 已恢复')
+        } else if (normalized === 'stop') {
+          await window.electronAPI.stopGoal(sessionId)
+          toast.info('Goal 已停止')
+        } else if (normalized === 'clear') {
+          await window.electronAPI.clearGoal(sessionId)
+          toast.info('Goal 状态已清除')
+        } else {
+          await window.electronAPI.startGoal(sessionId, command)
+          toast.success('Goal 已启动', { description: command })
+        }
+        setInputContent('')
+        setInputHtmlContent('')
+      } catch (error) {
+        toast.error('Goal 操作失败', { description: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
     // 如果输入为空但有建议，使用建议内容
     const effectiveText = text || suggestion || ''
     const pendingFilesSnapshot = pendingFilesRef.current
@@ -2560,7 +2590,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
 
   /** 1.6.2 翻转「队列自动发送」开关：本地乐观更新 + 写 meta 持久化（每个会话独立记忆、重启保留） */
   const handleToggleAutoSend = React.useCallback((): void => {
-    const next = !(store.get(agentQueueAutoSendMapAtom).get(sessionId) ?? sessionMeta?.autoQueueSendEnabled ?? false)
+    const next = !(store.get(agentQueueAutoSendMapAtom).get(sessionId) ?? sessionMeta?.autoQueueSendEnabled ?? true)
     setAutoSendMap((prev) => {
       const map = new Map(prev)
       map.set(sessionId, next)
@@ -3087,6 +3117,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
       <div data-profer-navigation-region="conversation" tabIndex={-1} className="agent-conversation flex h-full min-w-0 w-full flex-1 flex-col max-w-[min(72rem,100%)] mx-auto">
         {/* Agent Header（平板竖屏由外部顶栏承担标题时隐藏，避免双标题） */}
         {!hideAgentHeader && <AgentHeader sessionId={sessionId} />}
+        <GoalStatusBar sessionId={sessionId} />
 
         {/* 消息区域 */}
         <AgentMessages

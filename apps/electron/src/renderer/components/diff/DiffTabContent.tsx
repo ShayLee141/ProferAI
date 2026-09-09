@@ -247,6 +247,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const [htmlPreviewUrl, setHtmlPreviewUrl] = React.useState('')
   const [htmlSourceMode, setHtmlSourceMode] = React.useState(false)
   const [pdfSrc, setPdfSrc] = React.useState('')
+  const [pdfError, setPdfError] = React.useState('')
   const [pdfZoom, setPdfZoom] = React.useState(100)
   const pdfIframeRef = React.useRef<HTMLIFrameElement>(null)
   const [imagePath, setImagePath] = React.useState('')
@@ -382,6 +383,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     setHtmlPreviewUrl('')
     setHtmlSourceMode(false)
     setPdfSrc('')
+    setPdfError('')
     setPdfZoom(100)
     setImagePath('')
     setImageDataUrl('')
@@ -452,6 +454,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       setOfficeFallbackHtml(cached.officeHtml ?? '')
       setHtmlPreviewUrl(cached.htmlPreviewUrl ?? '')
       setPdfSrc(cached.pdfSrc ?? '')
+      setPdfError('')
       setPdfZoom(100)
       setImagePath(cached.imagePath ?? '')
       setImageDataUrl(cached.imageDataUrl ?? '')
@@ -470,6 +473,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       setOfficeFallbackHtml('')
       setHtmlPreviewUrl('')
       setPdfSrc('')
+      setPdfError('')
       setPdfZoom(100)
       setImagePath('')
       setImageDataUrl('')
@@ -500,8 +504,17 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
               const result = await window.electronAPI.preparePdfPreview(filePath, fileAccess)
               if (cancelled) return
               const src = result?.tmpHtmlUrl ?? ''
-              setPdfSrc(src)
-              cacheSet(cacheKey, { oldContent: '', newContent: '', pdfSrc: src })
+              if (!src) {
+                setPdfSrc('')
+                setPdfError('PDF 预览加载失败，请重试')
+                // 失败结果不能写入成功缓存，否则重试/重新打开会永久命中空 src。
+                contentCache.delete(cacheKey)
+              } else {
+                setPdfSrc(src)
+                setPdfError('')
+                cacheSet(cacheKey, { oldContent: '', newContent: '', pdfSrc: src })
+              }
+              setLoading(false)
               return
             }
             if (isImage) {
@@ -569,8 +582,13 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
         if (previewOnly && !MD_EXTS.has(ext) && content) {
           if (!cancelled) setLoading(false)
         }
-      } catch {
-        // 加载失败静默处理
+      } catch (error) {
+        if (!cancelled && isPdf) {
+          setPdfSrc('')
+          setPdfError(error instanceof Error && error.message ? error.message : 'PDF 预览加载失败，请重试')
+          // 不缓存失败结果；下一次重试必须重新请求主进程。
+          contentCache.delete(cacheKey)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -637,8 +655,8 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     let message: string | null = null
     if (isLegacyOffice) {
       message = `暂不支持 ${ext.toUpperCase().slice(1)} 格式内联预览`
-    } else if (isPdf && !pdfSrc) {
-      message = 'PDF 文件过大，无法在此预览'
+    } else if (isPdf && pdfError) {
+      message = pdfError
     } else if (isDocx && !docxHtml) {
       message = '无法加载 DOCX 预览'
     } else if (isOfficePreview && !officeHtml) {
@@ -650,7 +668,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       toastedPreviewFailRef.current = key
       toast.warning(message)
     }
-  }, [previewOnly, loading, filePath, ext, isLegacyOffice, isPdf, pdfSrc, isDocx, docxHtml, isOfficePreview, officeHtml, isImage, imageDataUrl])
+  }, [previewOnly, loading, filePath, ext, isLegacyOffice, isPdf, pdfSrc, pdfError, isDocx, docxHtml, isOfficePreview, officeHtml, isImage, imageDataUrl])
 
   // scrollPosition persistent: module-level Map keyed by sessionId:filePath
   // content changes (refreshVersion bump) → delete stored position;
@@ -851,6 +869,13 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       return m
     })
   }, [sessionId, setRefreshVersionMap])
+
+  const handlePdfRetry = React.useCallback(() => {
+    contentCache.delete(getContentCacheKey('preview', previewContentVersion))
+    setPdfError('')
+    setPdfSrc('')
+    handleManualRefresh()
+  }, [getContentCacheKey, handleManualRefresh, previewContentVersion])
 
   // persistRef 始终持有最新 persistMarkdownDraft，供 setTimeout / unmount cleanup 调用。
   // 用 effect 而非渲染期赋值，避免 React 19 严格模式下并发渲染中途读到中间态。
@@ -1104,9 +1129,22 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
                   src={pdfSrc}
                   className="w-full h-full border-0"
                   title={getFileBaseName(filePath) || 'PDF'}
+                  onError={() => {
+                    setPdfSrc('')
+                    setPdfError('PDF 页面渲染失败，请重试')
+                    contentCache.delete(getContentCacheKey('preview', previewContentVersion))
+                  }}
                 />
               </div>
-              ) : null
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full gap-3 px-4 text-center">
+                  <FileQuestion className="size-6 text-destructive/70" />
+                  <span className="text-[13px] text-muted-foreground">{pdfError || 'PDF 预览加载失败'}</span>
+                  <button type="button" onClick={handlePdfRetry} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted/50">
+                    <RefreshCw className="size-3.5" /> 重试
+                  </button>
+                </div>
+              )
             ) : isImage ? (
               imageDataUrl ? (
                 <div className="relative h-full">
