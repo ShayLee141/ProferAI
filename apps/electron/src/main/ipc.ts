@@ -4069,29 +4069,14 @@ export function registerIpcHandlers(): void {
           return { success: false, message: `连接失败: ${msg}` }
         }
       }
-      // GPT Image 生图工具测试
-      if (toolId === 'nano-banana' || toolId === 'gpt-image') {
-        const { getToolCredentials: getCredentials } = await import('./lib/chat-tool-config')
-        const credentials = getCredentials(toolId)
-        if (!credentials.apiKey) {
-          return { success: false, message: '请先填写 OpenAI API Key' }
-        }
-        try {
-          const baseUrl = credentials.baseUrl?.trim() || 'https://api.openai.com'
-          const url = `${baseUrl}/v1/models`
-          const response = await fetch(url, {
-            method: 'GET',
-            headers: { 'Authorization': `Bearer ${credentials.apiKey}` },
-          })
-          if (!response.ok) {
-            const errorText = await response.text()
-            return { success: false, message: `API 请求失败 (${response.status}): ${errorText.slice(0, 200)}` }
-          }
-          return { success: true, message: `连接成功，OpenAI API 可用` }
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error)
-          return { success: false, message: `连接失败: ${msg}` }
-        }
+      // GPT Image 生图工具测试：官方模式走 Profer 登录态，自带 Key 模式才走 OpenAI API Key。
+      if (toolId === 'gpt-image') {
+        const { testGptImageConnection } = await import('./lib/gpt-image-connection')
+        return testGptImageConnection()
+      }
+      if (toolId === 'nano-banana') {
+        const { testLegacyImageToolConnection } = await import('./lib/gpt-image-connection')
+        return testLegacyImageToolConnection(toolId)
       }
       return { success: false, message: `工具 ${toolId} 不支持测试` }
     }
