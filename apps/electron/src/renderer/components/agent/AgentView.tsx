@@ -29,7 +29,7 @@ import { PermissionBanner } from './PermissionBanner'
 import { RuntimeProcessPanel } from './RuntimeProcessPanel'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import { PresetSelector } from './PresetSelector'
-import { referenceForSelectablePreset } from './preset-selector-utils'
+import { referenceForSelectablePreset, selectablePresetMatchesReference } from './preset-selector-utils'
 import { agentPresetCacheKey, agentPresetsAtom, agentPresetsLoadedAtom } from '@/atoms/agent-preset-atoms'
 import { AskUserBanner } from './AskUserBanner'
 import { ExitPlanModeBanner } from './ExitPlanModeBanner'
@@ -40,9 +40,11 @@ import { QuotedSelectionChip } from '@/components/diff/QuotedSelectionChip'
 import { RichTextInput, type RichTextInputHandle } from '@/components/ai-elements/rich-text-input'
 import { SpeechButton } from '@/components/ai-elements/speech-button'
 import { InputToolbarOverflow, type ToolbarItem } from '@/components/ai-elements/InputToolbarOverflow'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  AgentComposerToolMenuItem,
+  AgentComposerToolPopover,
+  AgentComposerToolTrigger,
+} from '@/components/ai-elements/composer/ComposerTool'
 import { Switch } from '@/components/ui/switch'
 import {
   AlertDialog,
@@ -129,7 +131,7 @@ const AGENT_REFRESH_HEADROOM = 100
 /** 内存缓存只保留尾部窗口，防止随用户加载更多历史无限膨胀 */
 const AGENT_CACHE_WINDOW = DESKTOP_AGENT_PAGE_SIZE + AGENT_REFRESH_HEADROOM
 
-import { MAX_ATTACHMENT_SIZE } from '@profer/shared'
+import { MAX_ATTACHMENT_SIZE, resolveEffectivePermissionMode } from '@profer/shared'
 import { fileToBase64, formatFileNames, getFileBaseName, getFileParentPath } from '@/lib/file-utils'
 import { createClipboardPendingFile, createClipboardTextDraft, makeUniqueAttachmentName } from '@/lib/clipboard-text-attachment'
 import { AgentMessageQueue } from './AgentMessageQueue'
@@ -214,11 +216,26 @@ interface OpenAIThinkingConfig {
 
 interface AgentThinkingPopoverProps {
   agentThinking: import('@profer/shared').ThinkingConfig | undefined
+  tabletMode?: boolean
+  sessionId: string
   onToggle: () => void
   /** Pi + Codex 推理模型时，统一用同一个脑图标控制会话级 reasoning.effort。 */
   openAIConfig?: OpenAIThinkingConfig
   /** 将已持久化的会话档位即时同步回 renderer，避免菜单停留在旧状态。 */
   onOpenAIThinkingUpdated: (session: import('@profer/shared').AgentSessionMeta) => void
+  /** 当前会话已持久化的推理强度覆盖（null/undefined=未设置，跟随预设/全局）。 */
+  sessionAgentEffort?: import('@profer/shared').AgentEffort | null
+  /** 当前会话绑定预设声明的推理强度；未设置时为空，作为无会话覆盖时的默认档。 */
+  presetEffort?: import('@profer/shared').AgentEffort
+  /** 会话级思考强度覆盖持久化成功后回写会话列表。 */
+  onAgentEffortUpdated?: (session: import('@profer/shared').AgentSessionMeta) => void
+}
+
+const EFFORT_LABELS: Record<import('@profer/shared').AgentEffort, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+  max: '最大',
 }
 
 const OPENAI_THINKING_LABELS: Record<string, string> = {
@@ -234,9 +251,9 @@ const OPENAI_THINKING_LABELS: Record<string, string> = {
 /** 完整推理档位顺序（缺省 capability 时菜单回退用）。 */
 const ALL_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
-function AgentThinkingPopover({ agentThinking, onToggle, openAIConfig, onOpenAIThinkingUpdated }: AgentThinkingPopoverProps): React.ReactElement {
+function AgentThinkingPopover({ agentThinking, onToggle, openAIConfig, sessionId, sessionAgentEffort, presetEffort, onAgentEffortUpdated, onOpenAIThinkingUpdated, tabletMode = false }: AgentThinkingPopoverProps): React.ReactElement {
   const [thinkingExpanded, setThinkingExpanded] = useAtom(thinkingExpandedAtom)
-  const [effort, setEffort] = useAtom(agentEffortAtom)
+  const effort = useAtomValue(agentEffortAtom)
   const [open, setOpen] = React.useState(false)
 
   const isOpenAIReasoning = Boolean(openAIConfig)
@@ -244,11 +261,37 @@ function AgentThinkingPopover({ agentThinking, onToggle, openAIConfig, onOpenAIT
     ? openAIConfig?.currentLevel !== 'off'
     : agentThinking?.type === 'adaptive'
 
-  const handleEffortChange = React.useCallback((v: string) => {
+  // 生效档位级联：会话级手动覆盖 > 预设默认 > 全局设置 > high（与主进程 query 一致）。
+  const hasSessionEffortOverride = sessionAgentEffort !== undefined && sessionAgentEffort !== null
+  const defaultEffort = presetEffort ?? effort ?? 'high'
+  const activeEffort = sessionAgentEffort ?? defaultEffort
+  const openAIDefaultLabel = presetEffort ? `预设默认（${EFFORT_LABELS[presetEffort]}）` : '全局默认'
+
+  /** 手动切换思考强度：只写本会话覆盖，不动预设/全局；运行中由主进程拒绝，下一轮生效。 */
+  const handleEffortChange = React.useCallback(async (v: string) => {
     const value = v as import('@profer/shared').AgentEffort
-    setEffort(value)
-    window.electronAPI.updateSettings({ agentEffort: value }).catch(console.error)
-  }, [setEffort])
+    try {
+      const updated = await window.electronAPI.updateSessionAgentEffort(sessionId, value)
+      onAgentEffortUpdated?.(updated)
+      toast.success(`思考强度已设为「${EFFORT_LABELS[value]}」，下一轮生效`)
+    } catch (error) {
+      console.error('[Agent] 切换思考强度失败:', error)
+      toast.error(error instanceof Error ? error.message : '切换思考强度失败')
+    }
+  }, [sessionId, onAgentEffortUpdated])
+
+  /** 清除会话级覆盖，回落预设默认 / 全局设置。 */
+  const handleResetEffort = React.useCallback(async () => {
+    if (!hasSessionEffortOverride) return
+    try {
+      const updated = await window.electronAPI.updateSessionAgentEffort(sessionId, null)
+      onAgentEffortUpdated?.(updated)
+      toast.success('思考强度已恢复预设/全局默认')
+    } catch (error) {
+      console.error('[Agent] 恢复思考强度默认失败:', error)
+      toast.error(error instanceof Error ? error.message : '恢复思考强度默认失败')
+    }
+  }, [sessionId, onAgentEffortUpdated, hasSessionEffortOverride])
 
   const handleOpenAILevelChange = (level: string | null): void => {
     if (!openAIConfig) return
@@ -267,93 +310,84 @@ function AgentThinkingPopover({ agentThinking, onToggle, openAIConfig, onOpenAIT
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverAnchor asChild>
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={openAIConfig?.disabled}
-            className={cn(
-              'size-[36px] rounded-full',
-              isEnabled ? 'text-green-500' : 'text-foreground/60 hover:text-foreground',
-            )}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => setOpen((value) => !value)}
-            aria-label={isOpenAIReasoning ? `推理档位：${openAIConfig?.currentLevel ? OPENAI_THINKING_LABELS[openAIConfig.currentLevel] : '全局默认'}` : '思考设置'}
-            aria-expanded={open}
-          >
-            <Brain className="size-5" />
-          </Button>
+    <AgentComposerToolPopover
+      open={open}
+      onOpenChange={setOpen}
+      tooltip={isOpenAIReasoning ? `推理档位：${openAIConfig?.currentLevel ? OPENAI_THINKING_LABELS[openAIConfig.currentLevel] : openAIDefaultLabel}` : '思考设置'}
+      className={cn('p-2 px-2.5', isOpenAIReasoning ? 'w-36' : 'w-auto min-w-[180px]')}
+      trigger={
+        <AgentComposerToolTrigger
+          label={isOpenAIReasoning ? `推理档位：${openAIConfig?.currentLevel ? OPENAI_THINKING_LABELS[openAIConfig.currentLevel] : openAIDefaultLabel}` : '思考设置'}
+          state={isEnabled ? 'active' : 'default'}
+          disabled={openAIConfig?.disabled}
+          tabletMode={tabletMode}
+          aria-expanded={open}
+        >
+          <Brain className="size-5" />
+        </AgentComposerToolTrigger>
+      }
+    >
+      {isOpenAIReasoning ? (
+        <div className="flex flex-col">
+          <div className="px-2 py-1 text-xs text-muted-foreground">推理档位</div>
+          {[
+            { level: null, label: openAIDefaultLabel },
+            ...(openAIConfig?.levels ?? ALL_THINKING_LEVELS).map((level) => ({
+              level,
+              label: OPENAI_THINKING_LABELS[level] ?? level,
+            })),
+          ].map(({ level, label }) => (
+            <AgentComposerToolMenuItem
+              key={level ?? '__default__'}
+              onClick={() => handleOpenAILevelChange(level)}
+              selected={(openAIConfig?.currentLevel ?? null) === level}
+            >
+              <span className="w-4 text-center">{(openAIConfig?.currentLevel ?? null) === level ? '✓' : ''}</span>
+              <span>{label}</span>
+            </AgentComposerToolMenuItem>
+          ))}
+          <div className="my-1 h-px bg-border" />
+          <div className="flex items-center justify-between gap-4 px-2 py-1">
+            <span className="text-xs text-foreground/70">展开思考</span>
+            <Switch
+              checked={thinkingExpanded}
+              onCheckedChange={setThinkingExpanded}
+              className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
+            />
+          </div>
         </div>
-      </PopoverAnchor>
-      <PopoverContent
-        side="top"
-        align="center"
-        sideOffset={8}
-        className={cn('p-2 px-2.5', isOpenAIReasoning ? 'w-36' : 'w-auto min-w-[180px]')}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        {isOpenAIReasoning ? (
-          <div className="flex flex-col">
-            <div className="px-2 py-1 text-xs text-muted-foreground">推理档位</div>
-            {[
-              { level: null, label: '全局默认' },
-              ...(openAIConfig?.levels ?? ALL_THINKING_LEVELS).map((level) => ({
-                level,
-                label: OPENAI_THINKING_LABELS[level] ?? level,
-              })),
-            ].map(({ level, label }) => (
-              <button
-                key={level ?? '__default__'}
-                type="button"
-                onClick={() => handleOpenAILevelChange(level)}
-                className={cn(
-                  'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-accent',
-                  (openAIConfig?.currentLevel ?? null) === level && 'bg-accent font-medium',
-                )}
-              >
-                <span className="w-4 text-center">{(openAIConfig?.currentLevel ?? null) === level ? '✓' : ''}</span>
-                <span>{label}</span>
-              </button>
-            ))}
-            <div className="my-1 h-px bg-border" />
-            <div className="flex items-center justify-between gap-4 px-2 py-1">
-              <span className="text-xs text-foreground/70">展开思考</span>
-              <Switch
-                checked={thinkingExpanded}
-                onCheckedChange={setThinkingExpanded}
-                className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
-              />
-            </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs text-foreground/70">思考模式</span>
+            <Switch checked={isEnabled} onCheckedChange={onToggle} className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3" />
           </div>
-        ) : (
-          <div className="flex flex-col gap-1.5">
+          <div className="h-px bg-border" />
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs text-foreground/70">展开思考</span>
+            <Switch checked={thinkingExpanded} onCheckedChange={setThinkingExpanded} className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3" />
+          </div>
+          <div className="h-px bg-border" />
+          <div className="flex flex-col gap-1">
             <div className="flex items-center justify-between gap-4">
-              <span className="text-xs text-foreground/70">思考模式</span>
-              <Switch checked={isEnabled} onCheckedChange={onToggle} className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3" />
-            </div>
-            <div className="h-px bg-border" />
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-xs text-foreground/70">展开思考</span>
-              <Switch checked={thinkingExpanded} onCheckedChange={setThinkingExpanded} className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3" />
-            </div>
-            <div className="h-px bg-border" />
-            <div className="flex flex-col gap-1">
               <span className="text-xs text-foreground/70">思考强度</span>
-              <div className="flex gap-0.5">
-                {(['low', 'medium', 'high', 'max'] as const).map((v) => (
-                  <button key={v} type="button" onClick={() => handleEffortChange(v)} className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', (effort ?? 'high') === v ? 'bg-primary text-primary-foreground' : 'text-foreground/50 hover:bg-muted hover:text-foreground/70')}>
-                    {v === 'low' ? '低' : v === 'medium' ? '中' : v === 'high' ? '高' : '最大'}
-                  </button>
-                ))}
-              </div>
+              {hasSessionEffortOverride && (
+                <button type="button" onClick={() => handleResetEffort()} title="恢复预设/全局默认" className="text-[10px] text-foreground/40 hover:text-foreground/70">
+                  默认
+                </button>
+              )}
+            </div>
+            <div className="flex gap-0.5">
+              {(['low', 'medium', 'high', 'max'] as const).map((v) => (
+                <button key={v} type="button" onClick={() => handleEffortChange(v)} className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', activeEffort === v ? 'bg-primary text-primary-foreground' : 'text-foreground/50 hover:bg-muted hover:text-foreground/70')}>
+                  {EFFORT_LABELS[v]}
+                </button>
+              ))}
             </div>
           </div>
-        )}
-      </PopoverContent>
-    </Popover>
+        </div>
+      )}
+    </AgentComposerToolPopover>
   )
 }
 
@@ -365,103 +399,89 @@ const AGENT_RUNTIME_OPTIONS: Array<{ value: AgentRuntime; label: string; descrip
 function AgentRuntimeSelector({
   runtime,
   disabled,
+  tabletMode,
   onChange,
 }: {
   runtime: AgentRuntime
   disabled: boolean
+  tabletMode: boolean
   onChange: (runtime: AgentRuntime) => void
 }): React.ReactElement {
   const [open, setOpen] = React.useState(false)
   const current = AGENT_RUNTIME_OPTIONS.find((option) => option.value === runtime) ?? AGENT_RUNTIME_OPTIONS[0]!
 
   return (
-    <Popover open={open} onOpenChange={(nextOpen) => setOpen(disabled ? false : nextOpen)}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={disabled}
-              className="h-8 shrink-0 gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/60 hover:bg-muted/50 hover:text-foreground"
-              aria-label={`Agent 内核：${current.label}`}
-            >
-              <Bot className="size-3.5" />
-              <span>{current.label}</span>
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top">
-          <p>{disabled ? 'Agent 运行中，完成后可切换内核' : '切换当前会话下一轮使用的 Agent 内核'}</p>
-        </TooltipContent>
-      </Tooltip>
-      <PopoverContent side="top" align="start" sideOffset={8} className="w-48 p-1.5" onOpenAutoFocus={(event) => event.preventDefault()}>
-        {AGENT_RUNTIME_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={cn(
-              'flex w-full flex-col rounded-md px-2.5 py-2 text-left transition-colors hover:bg-muted',
-              option.value === runtime && 'bg-muted',
-            )}
-            onClick={() => { onChange(option.value); setOpen(false) }}
-          >
-            <span className="text-xs font-medium">{option.label}</span>
-            <span className="mt-0.5 text-[11px] text-muted-foreground">{option.description}</span>
-          </button>
-        ))}
-      </PopoverContent>
-    </Popover>
+    <AgentComposerToolPopover
+      open={open}
+      onOpenChange={(nextOpen) => setOpen(disabled ? false : nextOpen)}
+      tooltip={disabled ? 'Agent 运行中，完成后可切换内核' : '切换当前会话下一轮使用的 Agent 内核'}
+      align="start"
+      className="w-48"
+      trigger={
+        <AgentComposerToolTrigger
+          label={`Agent 内核：${current.label}`}
+          tabletMode={tabletMode}
+          disabled={disabled}
+          className="w-auto gap-1.5 px-2 text-xs font-medium"
+        >
+          <Bot className="size-4" />
+          <span>{current.label}</span>
+        </AgentComposerToolTrigger>
+      }
+    >
+      {AGENT_RUNTIME_OPTIONS.map((option) => (
+        <AgentComposerToolMenuItem
+          key={option.value}
+          selected={option.value === runtime}
+          className="flex-col items-start px-2.5 py-2"
+          onClick={() => { onChange(option.value); setOpen(false) }}
+        >
+          <span className="text-xs font-medium">{option.label}</span>
+          <span className="mt-0.5 text-[11px] text-muted-foreground">{option.description}</span>
+        </AgentComposerToolMenuItem>
+      ))}
+    </AgentComposerToolPopover>
   )
 }
 
 // ===== 工具栏附件按钮（添加文件 / 附加文件夹 二级菜单） =====
 
-function AttachMenuButton({ onAttachFile, onAttachFolder, toolBtnSize }: {
+function AttachMenuButton({ onAttachFile, onAttachFolder, tabletMode }: {
   onAttachFile: () => void
   onAttachFolder: () => void
-  toolBtnSize: string
+  tabletMode: boolean
 }): React.ReactElement {
   const [open, setOpen] = React.useState(false)
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className={cn(toolBtnSize, 'shrink-0 rounded-full text-foreground/60 hover:text-foreground')}
-          aria-label="添加文件或文件夹"
-          title="添加附件"
+    <AgentComposerToolPopover
+      open={open}
+      onOpenChange={setOpen}
+      tooltip="添加文件或文件夹"
+      className="w-44"
+      trigger={
+        <AgentComposerToolTrigger
+          label="添加文件或文件夹"
+          tabletMode={tabletMode}
         >
           <Paperclip className="size-5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="center" sideOffset={8} className="w-44 p-1.5">
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs outline-none transition-colors duration-100 hover:bg-accent/70"
-          onClick={() => { setOpen(false); onAttachFile() }}
-        >
-          <Paperclip className="size-4 shrink-0" />
-          添加文件
-        </button>
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs outline-none transition-colors duration-100 hover:bg-accent/70"
-          onClick={() => { setOpen(false); onAttachFolder() }}
-        >
-          <FolderPlus className="size-4 shrink-0" />
-          附加文件夹
-        </button>
-      </PopoverContent>
-    </Popover>
+        </AgentComposerToolTrigger>
+      }
+    >
+      <AgentComposerToolMenuItem onClick={() => { setOpen(false); onAttachFile() }}>
+        <Paperclip className="size-4 shrink-0" />
+        添加文件
+      </AgentComposerToolMenuItem>
+      <AgentComposerToolMenuItem onClick={() => { setOpen(false); onAttachFolder() }}>
+        <FolderPlus className="size-4 shrink-0" />
+        附加文件夹
+      </AgentComposerToolMenuItem>
+    </AgentComposerToolPopover>
   )
 }
 
 // ===== 工具栏 Graph 按钮（状态感知） =====
 
-function ToolbarGraphButton({ onClick }: { onClick: () => void }): React.ReactElement {
+function ToolbarGraphButton({ onClick, tabletMode }: { onClick: () => void; tabletMode?: boolean }): React.ReactElement {
   const atomSummary = useAtomValue(currentGraphSummaryAtom)
   const sessionId = useAtomValue(currentAgentSessionIdAtom)
   const [ipcSummary, setIpcSummary] = React.useState<import('@profer/project-core').GraphSummary | null>(null)
@@ -481,32 +501,29 @@ function ToolbarGraphButton({ onClick }: { onClick: () => void }): React.ReactEl
   const inProgress = summary?.statusCounts.in_progress ?? 0
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          className={cn(
-            'flex items-center gap-1.5 h-9 rounded-lg transition-[transform,background-color,border-color,color] duration-150 ease-out active:scale-[0.97]',
-            hasData
-              ? 'px-2.5 bg-muted/40 text-xs hover:bg-accent/70 hover:text-accent-foreground'
-              : 'w-9 justify-center text-muted-foreground/40 hover:bg-accent/70 hover:text-accent-foreground',
-          )}
-        >
-          <GitBranch className={cn('size-[14px] flex-shrink-0', hasData && 'text-muted-foreground')} />
-          {hasData && (
-            <>
-              <span className="font-medium text-foreground/70 tabular-nums">{completed}/{total}</span>
-              <div className="w-8 h-1 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-400 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
-              </div>
-              <span className="text-muted-foreground/50">{inProgress > 0 ? '进行中' : progress === 100 ? '完成' : ''}</span>
-            </>
-          )}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="top">任务图{hasData ? ` · ${completed}/${total}` : ''}</TooltipContent>
-    </Tooltip>
+    <AgentComposerToolTrigger
+      label={`任务图${hasData ? ` · ${completed}/${total}` : ''}`}
+      tooltip={`任务图${hasData ? ` · ${completed}/${total}` : ''}`}
+      state={hasData ? 'default' : 'muted'}
+      tabletMode={tabletMode}
+      onClick={onClick}
+      className={cn(
+        'active:scale-[0.97]',
+        hasData ? 'w-auto gap-1.5 px-2.5 text-xs' : 'w-auto',
+        !hasData && 'text-muted-foreground/40',
+      )}
+    >
+      <GitBranch className="size-[14px] shrink-0" />
+      {hasData && (
+        <>
+          <span className="font-medium text-foreground/70 tabular-nums">{completed}/{total}</span>
+          <div className="h-1 w-8 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-emerald-400 transition-all duration-500" style={{ width: `${progress}%` }} />
+          </div>
+          <span className="text-muted-foreground/50">{inProgress > 0 ? '进行中' : progress === 100 ? '完成' : ''}</span>
+        </>
+      )}
+    </AgentComposerToolTrigger>
   )
 }
 
@@ -779,11 +796,6 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   const agentError = streamErrors.get(sessionId) ?? null
   const planModeSessions = useAtomValue(agentPlanModeSessionsAtom)
   const isPlanMode = planModeSessions.has(sessionId)
-  const permissionModeMap = useAtomValue(agentPermissionModeMapAtom)
-  const defaultPermissionMode = useAtomValue(agentDefaultPermissionModeAtom)
-  const persistedPermissionMode = useAtomValue(sessionPersistedPermissionModeAtom(sessionId))
-  const permissionMode = permissionModeMap.get(sessionId) ?? persistedPermissionMode ?? defaultPermissionMode
-  const isPermissionPlanMode = permissionMode === 'plan'
   const store = useStore()
   const currentQuotedSelection = useAtomValue(currentQuotedSelectionAtom)
   const setQuotedSelectionMap = useSetAtom(quotedSelectionMapAtom)
@@ -1005,6 +1017,30 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
       .then((updated) => setAgentSessions((previous) => previous.map((session) => session.id === sessionId ? updated : session)))
       .catch((error) => console.error('[Agent] 自动匹配预设失败:', error))
   }, [hasUsableSessionPreset, presetsLoaded, sessionId, sessionMeta, setAgentSessions, workspacePresetList, workspaceSlug])
+  // 会话绑定的当前预设（与 PresetSelector 同源解析）：决定本会话权限上限 / 岗位能力。
+  // 切换预设后 sessionPresetReference 更新即触发重算，权限图标随岗位立即联动。
+  const permissionModeMap = useAtomValue(agentPermissionModeMapAtom)
+  const defaultPermissionMode = useAtomValue(agentDefaultPermissionModeAtom)
+  const persistedPermissionMode = useAtomValue(sessionPersistedPermissionModeAtom(sessionId))
+  const sessionBoundPreset = React.useMemo(
+    () => {
+      if (!sessionPresetId) return undefined
+      return workspacePresetList.find((preset) =>
+        preset.enabledInWorkspace !== false
+        && preset.id === sessionPresetId
+        && (!sessionPresetReference || selectablePresetMatchesReference(preset, sessionPresetReference)),
+      )
+    },
+    [workspacePresetList, sessionPresetId, sessionPresetReference],
+  )
+  // 有效权限 = 预设上限；用户显式 override 只能在预设声明范围内收紧（不能放宽）。
+  // 避免旧工具栏在预设 auto/plan 时仍显示“完全自动”并作为 override 发回主进程。
+  const requestedPermissionMode = permissionModeMap.get(sessionId) ?? persistedPermissionMode
+  const presetPermissionCapMode = sessionBoundPreset?.permissionMode ?? defaultPermissionMode
+  const permissionMode = requestedPermissionMode
+    ? resolveEffectivePermissionMode(presetPermissionCapMode, requestedPermissionMode)
+    : presetPermissionCapMode
+  const isPermissionPlanMode = permissionMode === 'plan'
   const [presetMenuOpen, setPresetMenuOpen] = React.useState(false)
   const openWorkspacePresets = React.useCallback(() => {
     setActiveView('agent-skills')
@@ -2925,9 +2961,6 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   const isCompacting = contextStatus.isCompacting
   const canSend = messagesLoaded && !presetSelectionRequired && (hasTextInput || pendingFiles.length > 0 || !!suggestion) && agentChannelId !== null && hasAvailableModel && (!streaming || hasTextInput) && !isCompacting && !streamState?.stopping
 
-  // 触控目标尺寸：平板 44px（size-11），桌面保持 36px
-  const toolBtnSize = tabletMode ? 'size-11' : 'size-[36px]'
-
   const inputToolbarItems = React.useMemo<ToolbarItem[]>(() => {
     const items: ToolbarItem[] = [
     {
@@ -2948,23 +2981,32 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
         <AgentRuntimeSelector
           runtime={sessionAgentRuntime}
           disabled={streaming || backgroundWaiting || runtimeSwitchInFlight}
+          tabletMode={tabletMode}
           onChange={handleAgentRuntimeChange}
         />
       ),
     },
-    { key: 'permission-mode', node: <PermissionModeSelector sessionId={sessionId} composerTool tabletMode={tabletMode} /> },
-    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} persistedPresetReference={sessionMeta?.presetReference} workspaceSlug={workspaceSlug ?? undefined} open={presetMenuOpen} onOpenChange={setPresetMenuOpen} onManagePresets={openWorkspacePresets} /> },
+    { key: 'permission-mode', node: <PermissionModeSelector sessionId={sessionId} presetPermissionMode={sessionBoundPreset?.permissionMode} composerTool tabletMode={tabletMode} /> },
+    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} persistedPresetReference={sessionMeta?.presetReference} workspaceSlug={workspaceSlug ?? undefined} open={presetMenuOpen} onOpenChange={setPresetMenuOpen} onManagePresets={openWorkspacePresets} tabletMode={tabletMode} /> },
     {
       key: 'thinking',
       node: (
         <AgentThinkingPopover
           agentThinking={agentThinking}
+          sessionId={sessionId}
+          sessionAgentEffort={sessionMeta?.agentEffort ?? null}
+          presetEffort={sessionBoundPreset?.effort}
           onToggle={() => {
             const next = agentThinking?.type === 'adaptive'
               ? { type: 'disabled' as const }
               : { type: 'adaptive' as const }
             setAgentThinking(next)
             window.electronAPI.updateSettings({ agentThinking: next })
+          }}
+          onAgentEffortUpdated={(updatedSession) => {
+            setAgentSessions((sessions) => sessions.map((session) => (
+              session.id === updatedSession.id ? updatedSession : session
+            )))
           }}
           onOpenAIThinkingUpdated={(updatedSession) => {
             setAgentSessions((sessions) => sessions.map((session) => (
@@ -2982,14 +3024,14 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
         />
       ),
     },
-    { key: 'speech', node: <SpeechButton className="size-[36px] shrink-0 rounded-full" /> },
+    { key: 'speech', node: <SpeechButton composerTool tabletMode={tabletMode} /> },
     {
       key: 'attach',
       node: (
         <AttachMenuButton
           onAttachFile={handleOpenFileDialog}
           onAttachFolder={handleAttachFolder}
-          toolBtnSize={toolBtnSize}
+          tabletMode={tabletMode}
         />
       ),
     },
@@ -3009,12 +3051,14 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
           planQuotaChannelId={planQuotaChannelId}
           sessionId={sessionId}
           onCompact={handleCompact}
+          composerTool
+          tabletMode={tabletMode}
         />
       ),
     },
     {
       key: 'graph',
-      node: <ToolbarGraphButton onClick={() => { setGraphDialogOpen(true); setGraphRefreshVersion(v => v + 1) }} />,
+      node: <ToolbarGraphButton tabletMode={tabletMode} onClick={() => { setGraphDialogOpen(true); setGraphRefreshVersion(v => v + 1) }} />,
     },
   ]
     return tabletMode
@@ -3049,66 +3093,38 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     presetMenuOpen,
     workspaceSlug,
     openWorkspacePresets,
+    sessionBoundPreset,
   ])
 
   const inputTrailingNode = (streaming || streamState?.stopping) ? (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className={cn(
-            toolBtnSize,
-            'rounded-full text-destructive hover:!text-[hsl(0,75%,55%)] hover:!bg-[var(--stop-hover-bg)]',
-          )}
-          onClick={handleStop}
-          disabled={streamState?.stopping}
-        >
-          <Square className="size-[16px]" fill="currentColor" strokeWidth={0} />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="text-center">
-        <p>停止 Agent</p>
-        <p>{getAcceleratorDisplay(getActiveAccelerator('stop-generation'))}</p>
-      </TooltipContent>
-    </Tooltip>
+    <AgentComposerToolTrigger
+      label="停止 Agent"
+      tooltip={<>停止 Agent<br />{getAcceleratorDisplay(getActiveAccelerator('stop-generation'))}</>}
+      state="destructive"
+      tabletMode={tabletMode}
+      className="hover:!text-[hsl(0,75%,55%)] hover:!bg-[var(--stop-hover-bg)]"
+      onClick={handleStop}
+      disabled={streamState?.stopping}
+    >
+      <Square className="size-[16px]" fill="currentColor" strokeWidth={0} />
+    </AgentComposerToolTrigger>
   ) : (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className={cn(
-            toolBtnSize,
-            'rounded-full',
-            canSend
-              ? 'text-primary hover:bg-primary/10'
-              : 'text-foreground/30 cursor-not-allowed'
-          )}
-          onClick={handleSend}
-          // 1.6.1 右键发送按钮：无条件加入队列（无论队列是否为空），阻止默认浏览器右键菜单
-          onContextMenu={(event) => {
-            event.preventDefault()
-            enqueueCurrentInput()
-          }}
-          disabled={!canSend}
-        >
-          <CornerDownLeft className="size-[22px]" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="text-center">
-        {queuedMessages.length > 0 ? (
-          <p>点击添加到队列（Enter）</p>
-        ) : (
-          <>
-            <p>左键发送（Enter）</p>
-            <p>右键添加到队列</p>
-          </>
-        )}
-      </TooltipContent>
-    </Tooltip>
+    <AgentComposerToolTrigger
+      label={queuedMessages.length > 0 ? '点击添加到队列（Enter）' : '发送消息（Enter）'}
+      tooltip={queuedMessages.length > 0 ? '点击添加到队列（Enter）' : <>左键发送（Enter）<br />右键添加到队列</>}
+      state={canSend ? 'active' : 'muted'}
+      tabletMode={tabletMode}
+      className="disabled:cursor-not-allowed"
+      onClick={handleSend}
+      // 1.6.1 右键发送按钮：无条件加入队列（无论队列是否为空），阻止默认浏览器右键菜单
+      onContextMenu={(event) => {
+        event.preventDefault()
+        enqueueCurrentInput()
+      }}
+      disabled={!canSend}
+    >
+      <CornerDownLeft className="size-[22px]" />
+    </AgentComposerToolTrigger>
   )
 
   return (

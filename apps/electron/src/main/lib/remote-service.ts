@@ -1339,13 +1339,29 @@ export async function handleRemoteCommand(
       const sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
       const level = parsed.level as string | null
       if (!sessionId) return { ok: false, error: '缺少 sessionId' }
-      const validLevels = [null, 'off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+      const validLevels = [null, 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
       if (level !== null && !validLevels.includes(level)) {
         return { ok: false, error: `无效的推理档位: ${String(level)}` }
       }
       if (!getAgentSessionMeta(sessionId)) return { ok: false, error: `Agent 会话不存在: ${sessionId}` }
       if (isAgentSessionActive(sessionId)) return { ok: false, error: 'Agent 正在运行，完成后再切换推理档位' }
       const updated = updateAgentSessionMeta(sessionId, { openAIThinkingLevel: level as import('@profer/shared').AgentThinkingLevel | null })
+      publishSessionUpdated(updated)
+      return { ok: true, data: buildSessionItem(updated) }
+    }
+
+    // 设置会话推理强度覆盖（对齐桌面 UPDATE_SESSION_AGENT_EFFORT：null=清除覆盖，运行中拒绝）
+    case 'update_session_agent_effort': {
+      const sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
+      const effort = parsed.effort as string | null
+      if (!sessionId) return { ok: false, error: '缺少 sessionId' }
+      const validEfforts = [null, 'low', 'medium', 'high', 'max']
+      if (effort !== null && !validEfforts.includes(effort)) {
+        return { ok: false, error: `无效的推理强度: ${String(effort)}` }
+      }
+      if (!getAgentSessionMeta(sessionId)) return { ok: false, error: `Agent 会话不存在: ${sessionId}` }
+      if (isAgentSessionActive(sessionId)) return { ok: false, error: 'Agent 正在运行，完成后再切换思考强度' }
+      const updated = updateAgentSessionMeta(sessionId, { agentEffort: effort as import('@profer/shared').AgentEffort | null })
       publishSessionUpdated(updated)
       return { ok: true, data: buildSessionItem(updated) }
     }

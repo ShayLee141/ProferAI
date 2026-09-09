@@ -41,6 +41,7 @@ import type {
   BranchTreeSnapshot,
   AgentSessionMeta,
   AgentRuntime,
+  AgentEffort,
   AgentThinkingLevel,
   ProviderType,
   ReasoningCapability,
@@ -867,6 +868,8 @@ export interface ElectronAPI {
   updateSessionCodexFastMode: (sessionId: string, enabled: boolean) => Promise<AgentSessionMeta>
   /** 切换当前会话的 ChatGPT Codex 推理档位（跨会话持久化）。 */
   updateSessionOpenAIThinkingLevel: (sessionId: string, level: AgentThinkingLevel | null) => Promise<AgentSessionMeta>
+  /** 切换当前会话的推理强度覆盖（Claude/Pi 通用；null=清除覆盖，运行中拒绝，下一轮生效）。 */
+  updateSessionAgentEffort: (sessionId: string, effort: AgentEffort | null) => Promise<AgentSessionMeta>
   /** 查询某 Pi 模型可用的推理档位能力（renderer 思考档位菜单动态展示）。 */
   getPiReasoningCapability: (provider: ProviderType, modelId: string | undefined) => Promise<ReasoningCapability | undefined>
 
@@ -2549,6 +2552,10 @@ const electronAPI: ElectronAPI = {
 
   updateSessionOpenAIThinkingLevel: (sessionId: string, level: AgentThinkingLevel | null) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_SESSION_OPENAI_THINKING, sessionId, level)
+  },
+
+  updateSessionAgentEffort: (sessionId: string, effort: AgentEffort | null) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_SESSION_AGENT_EFFORT, sessionId, effort)
   },
 
   getPiReasoningCapability: (provider: ProviderType, modelId: string | undefined) => {

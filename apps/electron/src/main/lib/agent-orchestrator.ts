@@ -1795,10 +1795,10 @@ ${enrichedMessage}`
           runtimeEnv: piRuntimeEnv,
           thinkingLevel: resolvePiThinkingLevel(
             sessionMeta?.openAIThinkingLevel,
-            // 预设 effort 覆盖全局档位（与 Claude 侧 effort 级联一致）；undefined 跟随全局
+            // 预设 effort 作为无会话级覆盖时的默认档；会话级 agentEffort 手动切换优先
             {
               agentThinking: !(appSettings.agentThinking?.type === 'disabled'),
-              agentEffort: presetPolicy.effort ?? appSettings.agentEffort,
+              agentEffort: sessionMeta?.agentEffort ?? presetPolicy.effort ?? appSettings.agentEffort,
             },
             channel.provider,
           ),
@@ -1861,7 +1861,7 @@ ${enrichedMessage}`
         ...(appSettings.agentThinking && {
           thinking: appSettings.agentThinking,
         }),
-        effort: presetPolicy.effort ?? appSettings.agentEffort ?? 'high',
+        effort: sessionMeta?.agentEffort ?? presetPolicy.effort ?? appSettings.agentEffort ?? 'high',
         ...(appSettings.agentMaxBudgetUsd != null &&
           appSettings.agentMaxBudgetUsd > 0 && {
           maxBudgetUsd: appSettings.agentMaxBudgetUsd,

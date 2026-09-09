@@ -761,6 +761,8 @@ export interface AgentSessionMeta {
   codexFastMode?: boolean
   /** ChatGPT Codex 推理档位；跨会话持久化（off/low/medium/high/xhigh）。null/undefined 表示未设置，使用全局默认值。 */
   openAIThinkingLevel?: AgentThinkingLevel | null
+  /** 会话级推理强度覆盖（low/medium/high/max）；由思考强度选择器手动切换，优先于预设/全局默认。null=清除覆盖跟随预设或全局。 */
+  agentEffort?: AgentEffort | null
   /** 所属工作区 ID */
   workspaceId?: string
   /** 当前 Agent 会话是否已激活 PPT 专用能力；缺省为 false。 */
@@ -2103,6 +2105,8 @@ export const AGENT_IPC_CHANNELS = {
   UPDATE_SESSION_CODEX_FAST_MODE: 'agent:update-session-codex-fast-mode',
   /** 切换指定会话的 ChatGPT Codex 推理档位（跨会话持久化）。 */
   UPDATE_SESSION_OPENAI_THINKING: 'agent:update-session-openai-thinking',
+  /** 切换指定会话的推理强度覆盖（Claude/Pi 通用；null=清除覆盖）。运行中拒绝，下一轮生效。 */
+  UPDATE_SESSION_AGENT_EFFORT: 'agent:update-session-agent-effort',
   /** 查询某 Pi 模型可用的推理档位能力（renderer 思考档位菜单展示）。 */
   GET_PI_REASONING_CAPABILITY: 'agent:get-pi-reasoning-capability',
   /** 切换指定空闲会话的 Agent runtime；跨 runtime 时清除 SDK 会话恢复 ID。 */

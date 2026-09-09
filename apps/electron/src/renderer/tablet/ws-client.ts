@@ -402,6 +402,11 @@ export class WsClient {
     return this.sendCommand({ type: 'update_session_thinking_level', sessionId, level })
   }
 
+  /** 设置会话推理强度覆盖（对齐桌面 updateSessionAgentEffort；null=清除覆盖） */
+  updateSessionAgentEffort(sessionId: string, effort: string | null): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_agent_effort', sessionId, effort })
+  }
+
   getUserProfile(): Promise<unknown> {
     return this.sendCommand({ type: 'get_user_profile' })
   }

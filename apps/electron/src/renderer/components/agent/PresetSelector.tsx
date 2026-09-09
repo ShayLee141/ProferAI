@@ -11,9 +11,7 @@ import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { BriefcaseBusiness, AlertTriangle, Loader2, Settings2 } from 'lucide-react'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { Button } from '@/components/ui/button'
+import { AgentComposerToolMenuItem, AgentComposerToolPopover, AgentComposerToolTrigger } from '@/components/ai-elements/composer/ComposerTool'
 import { Switch } from '@/components/ui/switch'
 import { agentPresetCacheKey, agentPresetsLoadedAtom, workspacePresetsAtom } from '@/atoms/agent-preset-atoms'
 import { agentSessionsAtom, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
@@ -55,9 +53,10 @@ interface PresetSelectorProps {
   onOpenChange?: (open: boolean) => void
   /** 跳转到 Agent 技能页的工作区预设配置。 */
   onManagePresets?: () => void
+  tabletMode?: boolean
 }
 
-export function PresetSelector({ sessionId, persistedPresetId, persistedPresetReference, workspaceSlug, open, onOpenChange, onManagePresets }: PresetSelectorProps): React.ReactElement {
+export function PresetSelector({ sessionId, persistedPresetId, persistedPresetReference, workspaceSlug, open, onOpenChange, onManagePresets, tabletMode = false }: PresetSelectorProps): React.ReactElement {
   const [presets, setPresets] = useAtom(workspacePresetsAtom(workspaceSlug))
   const loadedPresetCaches = useAtomValue(agentPresetsLoadedAtom)
   const setLoadedPresetCaches = useSetAtom(agentPresetsLoadedAtom)
@@ -134,10 +133,9 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
   }, [closeMenu, persistedPresetId, persistedPresetReference, sessionId, setAgentSessions, switchingReference, workspaceSlug])
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <Popover
-        open={isOpen}
-        onOpenChange={(nextOpen: boolean) => {
+    <AgentComposerToolPopover
+      open={isOpen}
+      onOpenChange={(nextOpen: boolean) => {
           setInternalOpen(nextOpen)
           onOpenChange?.(nextOpen)
           // 打开时刷新，保证技能页导入/编辑后的最新预设可见
@@ -146,28 +144,21 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
               .then(setPresets)
               .catch((error) => console.error('[PresetSelector] 刷新工作区预设失败:', error))
           }
-        }}
+      }}
+      tooltip={showPresetRequired ? '请先选择 Agent 预设' : `预设 · ${current?.name ?? '未知'}`}
+      align="start"
+      className="w-72"
+      trigger={
+          <AgentComposerToolTrigger
+            label={showPresetRequired ? '请先选择 Agent 预设' : `预设：${current?.name ?? '标准'}`}
+            state={showPresetRequired ? 'warning' : 'default'}
+            tabletMode={tabletMode}
+          >
+            {showPresetRequired ? <AlertTriangle className="size-5" /> : <BriefcaseBusiness className="size-5" />}
+          </AgentComposerToolTrigger>
+        }
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`预设：${current?.name ?? '标准'}`}
-                className={cn('size-[36px] rounded-full hover:text-foreground', showPresetRequired ? 'text-amber-600 dark:text-amber-400' : 'text-foreground/60')}
-              >
-                {showPresetRequired ? <AlertTriangle className="size-5" /> : <BriefcaseBusiness className="size-5" />}
-              </Button>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-[220px]">
-            <p className="font-medium">{showPresetRequired ? '请先选择 Agent 预设' : `预设 · ${current?.name ?? '未知'}`}</p>
-          </TooltipContent>
-        </Tooltip>
-        <PopoverContent align="start" side="top" className="w-72 p-1.5">
-          <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-0.5">
             <div className="flex items-center justify-between px-2 py-1">
               <span className="text-xs font-medium text-foreground/60">Agent 预设（岗位）</span>
               <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-foreground/55 select-none">
@@ -179,16 +170,12 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
               <div className="px-2 py-3 text-center text-xs text-foreground/55">当前工作区暂无可用预设</div>
             )}
             {availablePresets.map((preset) => (
-              <button
+              <AgentComposerToolMenuItem
                 key={preset.id}
-                type="button"
                 onClick={() => void selectPreset(preset)}
                 disabled={switchingReference !== null}
-                aria-pressed={preset === current}
-                className={cn(
-                  'flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60',
-                  preset === current && 'bg-muted',
-                )}
+                selected={preset === current}
+                className="flex-col items-start gap-0.5 px-2 py-1.5"
               >
                 <span className="flex items-center gap-1.5 text-xs font-medium">
                   <span className={cn('flex w-4 justify-center text-center', preset === current ? 'text-primary' : 'text-transparent')}>
@@ -204,20 +191,17 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
                 {!compactMode && (
                   <span className="pl-5.5 text-[11px] leading-4 text-foreground/55">{preset.description}</span>
                 )}
-              </button>
+              </AgentComposerToolMenuItem>
             ))}
             <div className="my-1 border-t border-border/60" />
-            <button
-              type="button"
+            <AgentComposerToolMenuItem
               onClick={() => { onManagePresets?.(); setInternalOpen(false); onOpenChange?.(false) }}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+              className="text-foreground/70"
             >
               <Settings2 className="size-3.5" />
               管理工作区预设
-            </button>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </TooltipProvider>
+            </AgentComposerToolMenuItem>
+        </div>
+    </AgentComposerToolPopover>
   )
 }

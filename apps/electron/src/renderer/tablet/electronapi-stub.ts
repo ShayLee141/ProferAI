@@ -32,6 +32,7 @@ interface TabletRemoteClient {
   moveSessionToWorkspace(payload: { sessionId: string; targetWorkspaceId: string }): Promise<unknown>
   /** 设置推理档位（null=恢复全局默认） */
   updateSessionThinkingLevel(sessionId: string, level: string | null): Promise<unknown>
+  updateSessionAgentEffort(sessionId: string, effort: string | null): Promise<unknown>
   getUserProfile(): Promise<unknown>
   listChannels(): Promise<unknown>
   createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown>
@@ -868,6 +869,10 @@ export function installElectronApiStub(): void {
     updateSessionOpenAIThinkingLevel: async (sessionId: string, level: string | null) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
       return remoteClient.updateSessionThinkingLevel(sessionId, level) as Promise<Record<string, unknown>>
+    },
+    updateSessionAgentEffort: async (sessionId: string, effort: string | null) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      return remoteClient.updateSessionAgentEffort(sessionId, effort) as Promise<Record<string, unknown>>
     },
     attachFile: () => unsupported('附加本地文件'),
     attachDirectory: () => unsupported('附加本地目录'),
