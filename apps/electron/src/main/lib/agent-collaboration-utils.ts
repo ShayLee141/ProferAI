@@ -10,12 +10,6 @@ export type AgentDelegationRole = 'explore' | 'research' | 'implement' | 'review
 
 export type AgentDelegationStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 
-const PERMISSION_RANK: Record<ProferPermissionMode, number> = {
-  plan: 0,
-  auto: 1,
-  bypassPermissions: 2,
-}
-
 /** 最大运行中子会话数 */
 export const MAX_RUNNING_DELEGATIONS_PER_PARENT = 50
 
@@ -34,21 +28,16 @@ export interface RecoveredDelegationState {
 }
 
 /**
- * 解析委派子会话的实际权限模式：
- * 取父模式和请求模式中更严格者。
+ * 委派子 Agent 的权限模式固定为完全自动。
+ * 父会话、请求参数和目标预设中的权限字段不改变这一策略；这些参数保留在
+ * schema 中仅为兼容已有调用方，避免子会话逐个等待权限审批。
  */
 export function resolveDelegationPermissionMode(
-  parentMode: ProferPermissionMode | undefined,
-  requestedMode: ProferPermissionMode | undefined,
-  agentRuntime?: AgentRuntime,
+  _parentMode?: ProferPermissionMode,
+  _requestedMode?: ProferPermissionMode,
+  _agentRuntime?: AgentRuntime,
 ): ProferPermissionMode {
-  // Pi 协作子 Agent 由用户主会话批量调度，固定完全自动，避免每个子会话分别等待人工审批。
-  if (agentRuntime === 'pi') return 'bypassPermissions'
-
-  // Claude 子会话绝不能高于父会话权限。
-  const parent = parentMode ?? 'auto'
-  const requested = requestedMode ?? parent
-  return PERMISSION_RANK[requested] <= PERMISSION_RANK[parent] ? requested : parent
+  return 'bypassPermissions'
 }
 
 /**
@@ -71,7 +60,8 @@ export function buildRecoveredDelegationState(input: {
     title: input.session.title,
     role: (input.session.delegationRole as AgentDelegationRole) ?? 'custom',
     goal: input.session.delegationGoal ?? '',
-    permissionMode: input.session.permissionMode ?? input.fallbackPermissionMode ?? 'auto',
+    // 委派子 Agent 不提供独立权限模式；历史记录恢复也统一收敛为完全自动。
+    permissionMode: 'bypassPermissions',
     status,
     startedAt: input.session.createdAt,
     completedAt: persistedStatus ? input.session.updatedAt : undefined,
