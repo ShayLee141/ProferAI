@@ -1571,6 +1571,36 @@ function createWslBashOperations(runtimeEnv: AgentRuntimeEnv, sessionId: string)
   }
 }
 
+export function ensureBashWorkingDirectory(
+  cwd: string,
+  pathExists: (path: string) => boolean = existsSync,
+  createDirectory: (path: string) => void = (path) => { mkdirSync(path, { recursive: true }) },
+): void {
+  const trimmedCwd = cwd.trim()
+  if (!trimmedCwd) throw new Error('Bash 工作目录为空，无法启动命令')
+  if (pathExists(trimmedCwd)) return
+
+  try {
+    // 会话目录由 Profer 管理；如果用户在两轮之间删除它，启动下一条命令时安全重建。
+    createDirectory(trimmedCwd)
+  } catch (error) {
+    throw new Error(`Bash 工作目录不存在且无法重建: ${trimmedCwd}`, { cause: error })
+  }
+}
+
+function formatLocalBashSpawnError(error: unknown, shell: string, cwd: string): Error {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  if (code !== 'ENOENT') return error instanceof Error ? error : new Error(String(error))
+
+  const shellLooksLikePath = isAbsolute(shell) || shell.includes('/') || shell.includes('\\')
+  const missingPart = shellLooksLikePath && !existsSync(shell)
+    ? `shell 不存在 (${shell})`
+    : !existsSync(cwd)
+      ? `工作目录不存在 (${cwd})`
+      : `shell 或工作目录不可用 (shell=${shell}, cwd=${cwd})`
+  return new Error(`Bash 启动失败：${missingPart}`, { cause: error })
+}
+
 function createControlledLocalBashOperations(
   sessionId: string,
   shellPath: string | undefined,
@@ -1582,10 +1612,17 @@ function createControlledLocalBashOperations(
           reject(new Error('aborted'))
           return
         }
+        try {
+          ensureBashWorkingDirectory(cwd)
+        } catch (error) {
+          reject(error)
+          return
+        }
         // Pi's public API lets Profer replace BashOperations. Profer explicitly
         // selects the platform shell so GUI-launched sessions do not depend on
         // an accidental PATH entry (macOS normally uses the user's zsh).
-        const child = spawn(shellPath ?? (process.platform === 'win32' ? 'bash' : '/bin/sh'), ['-c', command], {
+        const shell = shellPath ?? (process.platform === 'win32' ? 'bash' : '/bin/sh')
+        const child = spawn(shell, ['-c', command], {
           cwd,
           env: options.env ?? process.env,
           detached: process.platform !== 'win32',
@@ -1615,7 +1652,7 @@ function createControlledLocalBashOperations(
         const onAbort = (): void => killTree()
         child.stdout?.on('data', options.onData)
         child.stderr?.on('data', options.onData)
-        child.once('error', (error) => finish(() => reject(error)))
+        child.once('error', (error) => finish(() => reject(formatLocalBashSpawnError(error, shell, cwd))))
         child.once('close', (code) => finish(() => {
           if (options.signal?.aborted) reject(new Error('aborted'))
           else if (timedOut) reject(new Error(`timeout:${options.timeout}`))

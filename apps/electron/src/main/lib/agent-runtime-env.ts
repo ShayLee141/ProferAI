@@ -74,6 +74,38 @@ export function dirnameForPlatform(path: string, platform: NodeJS.Platform): str
   return platform === 'win32' ? win32.dirname(path) : dirname(path)
 }
 
+/**
+ * 解析 POSIX shell 的可执行路径。
+ *
+ * GUI 启动时 SHELL 可能是已经卸载的绝对路径，也可能只有 `bash` 这样的命令名；
+ * 不能把它未经校验地交给 child_process.spawn，否则 shell 缺失和 cwd 缺失都会只显示为 ENOENT。
+ */
+export function resolvePosixShellPath(
+  processEnv: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  pathDelimiter: string,
+  pathExists: (path: string) => boolean = existsSync,
+): string {
+  const requested = getCaseInsensitiveEnvValue(processEnv, 'SHELL')?.trim()
+  const candidates: string[] = []
+
+  if (requested) {
+    if (requested.startsWith('/')) {
+      candidates.push(requested)
+    } else {
+      const pathKey = getPathKey(processEnv)
+      for (const directory of (processEnv[pathKey] ?? '').split(pathDelimiter)) {
+        const trimmedDirectory = directory.trim()
+        if (trimmedDirectory) candidates.push(join(trimmedDirectory, requested))
+      }
+    }
+  }
+
+  const fallback = platform === 'darwin' ? '/bin/zsh' : '/bin/sh'
+  candidates.push(fallback)
+  return candidates.find(pathExists) ?? fallback
+}
+
 function collectProxyEnv(proxyUrl: string | undefined, processEnv: NodeJS.ProcessEnv): Record<string, string> {
   const env: Record<string, string> = {}
   const trimmedProxyUrl = proxyUrl?.trim()
@@ -245,10 +277,9 @@ export function buildAgentRuntimeEnv(options: BuildAgentRuntimeEnvOptions = {}):
     }
   }
 
-  // macOS/Linux 的 Pi Bash 使用用户实际的 POSIX shell；显式传递路径，
-  // 避免 Electron GUI 进程的 PATH 解析到错误或不存在的 bash。
-  const shellPath = getCaseInsensitiveEnvValue(processEnv, 'SHELL')
-    ?? (platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
+  // macOS/Linux 的 Pi Bash 使用经过存在性校验的 POSIX shell；显式传递绝对路径，
+  // 避免 Electron GUI 进程的 PATH 或失效 SHELL 配置把命令启动变成高频 ENOENT。
+  const shellPath = resolvePosixShellPath(processEnv, platform, pathDelimiter, pathExists)
   env.SHELL = shellPath
   return { env, shellKind: 'posix', shellPath }
 }
