@@ -256,9 +256,11 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
           <div
             data-profer-navigation-region="right-panel"
             className={cn(
-              // 只让 SidePanel 自身展开。若同时动画化外层 padding，面板会在横向展开时
-              // 从 top: 0 平移到 p-2 的最终基线，视觉上像从右上方斜着滑入。
-              filePanelVisible ? 'relative z-[70] flex items-stretch crt-sidebar p-2 pl-0' : 'relative z-[60] flex items-stretch crt-sidebar p-0'
+              // 上下边距始终保留，避免收起瞬间面板从上下各扩展 8px；仅切换右侧
+              // 横向 padding，并让 SidePanel 自身负责宽度过渡，保持收起方向纯水平。
+              filePanelVisible
+                ? 'relative z-[70] flex items-stretch crt-sidebar py-2 pr-2 pl-0'
+                : 'relative z-[60] flex items-stretch crt-sidebar py-2 pr-0 pl-0'
             )}
           >
             <RightSidePanel width={clampedRightPanelWidth} />
