@@ -321,6 +321,8 @@ ${suppress.has('task-graph') || capabilityDisabled('task-graph') ? '' : `${build
 
 Pi 会话没有 SDK 内置 SubAgent 工具，子 Agent 委派通过 Profer 协作子会话完成：用 \`mcp__collaboration__delegate_agent\`（单个）或 \`mcp__collaboration__delegate_agents\`（批量）创建真实可见、可追踪的子会话，再用 \`mcp__collaboration__wait_for_delegations\` / \`mcp__collaboration__get_delegation_results\` 收集结果。
 
+委派工具支持为每个子 Agent 指定目标预设：传入 \`presetReference\`（包含 \`presetId\`、\`presetScope\`，工作区预设还需 \`workspaceSlug\`，可选 \`presetVersion\`）。不传时子 Agent 继承当前父会话的稳定预设引用；目标预设必须是当前父会话工作区内可用且未禁用的预设。需要选择预设时先从预设列表读取完整的 \`presetReference\`，不要猜测或只传裸 ID。
+
 只在以下场景考虑委派：
 - 直觉路径尝试后结果与预期不符，或陷入反复
 - 需要并行探索 1 个以上独立子系统
@@ -341,7 +343,7 @@ Pi 会话没有 SDK 内置 SubAgent 工具，子 Agent 委派通过 Profer 协�
 
 Profer 没有预定义内置 SubAgent。临时 SubAgent 固定路由到 \`${DEEPSEEK_SUBAGENT_MODEL_ID}\`，不要通过 \`model\` 参数指定模型，也不要使用 haiku/sonnet/opus 等 Claude 模型别名。
 
-代码审查请使用 SDK 自带的 \`/code-review\` 或 \`/simplify\` Skill`)
+如需让临时 SubAgent 使用特定岗位，优先使用 Profer 协作委派工具并传入稳定的 \`presetReference\`；未指定时默认继承当前会话预设。代码审查请使用 SDK 自带的 \`/code-review\` 或 \`/simplify\` Skill`)
   } else if (claudeAvailable) {
     sections.push(`## SubAgent 委派策略
 

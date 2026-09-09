@@ -273,6 +273,8 @@ describe('buildSystemPrompt', () => {
     // 标准预设无 suppress：全部段落在场
     expect(standardPrompt).toContain('proma_task_create')
     expect(standardPrompt).toContain('## SubAgent 委派策略')
+    expect(standardPrompt).toContain('presetReference')
+    expect(standardPrompt).toContain('不传时子 Agent 继承当前父会话的稳定预设引用')
     expect(standardPrompt).toContain('## Profer 知识维护架构')
     expect(standardPrompt).toContain('### Pi Runtime 与文件记忆')
   })

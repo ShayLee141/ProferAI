@@ -994,7 +994,7 @@ export async function injectAgentCollaborationMcpServer(
       ),
       sdk.tool(
         'delegate_agent',
-        '创建一个真实可见的 Profer 协作子 Agent 会话来并行处理独立子任务。只用于长耗时、可并行、需要追踪的任务；简单搜索优先用内置 Agent/SubAgent。',
+        '创建一个真实可见的 Profer 协作子 Agent 会话来并行处理独立子任务。支持用 presetReference 指定目标 Agent 预设；不传则继承当前父会话预设。只用于长耗时、可并行、需要追踪的任务；简单搜索优先用内置 Agent/SubAgent。',
         schemas.delegate,
         async (args) => {
           const parent = assertCanCreateDelegation(ctx)
@@ -1011,7 +1011,7 @@ export async function injectAgentCollaborationMcpServer(
       ),
       sdk.tool(
         'delegate_agents',
-        '批量创建多个真实可见的 Profer 协作子 Agent 会话。适合把同一大任务拆成多片并行处理，单个父会话运行中子会话最多 50 个。',
+        '批量创建多个真实可见的 Profer 协作子 Agent 会话；每个 item 都可用 presetReference 指定目标 Agent 预设，不传则继承当前父会话预设。适合把同一大任务拆成多片并行处理，单个父会话运行中子会话最多 50 个。',
         schemas.delegateBatch,
         async (args) => {
           const parent = assertCanCreateDelegation(ctx, args.items.length)
@@ -1305,7 +1305,7 @@ export function buildPiCollaborationTools(
     sdk.defineTool({
       name: 'mcp__collaboration__delegate_agent',
       label: '委派子 Agent',
-      description: '创建一个真实可见的 Profer 协作子 Agent 会话来并行处理独立子任务。只用于长耗时、可并行、需要追踪的任务。',
+      description: '创建一个真实可见的 Profer 协作子 Agent 会话来并行处理独立子任务。支持用 presetReference 指定目标 Agent 预设；不传则继承当前父会话预设。只用于长耗时、可并行、需要追踪的任务。',
       parameters: Type.Object({
         title: Type.Optional(Type.String({ description: '子会话标题' })),
         role: roleType,
@@ -1330,7 +1330,7 @@ export function buildPiCollaborationTools(
     sdk.defineTool({
       name: 'mcp__collaboration__delegate_agents',
       label: '批量委派子 Agent',
-      description: '批量创建多个真实可见的 Profer 协作子 Agent 会话。适合把同一大任务拆成多片并行处理。',
+      description: '批量创建多个真实可见的 Profer 协作子 Agent 会话；每个 item 都可用 presetReference 指定目标 Agent 预设，不传则继承当前父会话预设。适合把同一大任务拆成多片并行处理。',
       parameters: Type.Object({
         sharedContext: Type.Optional(Type.String({ description: '批量子任务共用背景' })),
         items: Type.Array(delegateItemType, { description: '要创建的子会话列表，最多 50 个' }),
