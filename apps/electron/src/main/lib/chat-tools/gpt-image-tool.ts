@@ -1,5 +1,5 @@
 /**
- * GPT Image Chat adapter. Provider transport lives in ../gpt-image-service so
+ * AI 图片生成 Chat adapter. Provider transport lives in ../gpt-image-service so
  * Agent and Chat share credentials, request semantics and response handling.
  */
 import type { ToolCall, ToolResult, ToolDefinition } from '@profer/core'
@@ -24,15 +24,15 @@ export interface GptImageContext {
 
 export const GPT_IMAGE_TOOL_META: ChatToolMeta = {
   id: 'gpt-image',
-  name: 'GPT Image',
-  description: 'AI 图片生成与参考图编辑（官方模式每张成功扣 5 积分）',
+  name: 'AI 图片生成',
+  description: 'AI 图片生成与参考图编辑（支持 OpenAI Images、xAI Grok Imagine；官方模式每张成功扣 5 积分）',
   params: [{ name: 'prompt', type: 'string', description: '图片生成/编辑描述', required: true }],
   icon: 'ImagePlus',
   category: 'builtin',
   executorType: 'builtin',
   systemPromptAppend: `
 <gpt_image_instructions>
-你拥有 AI 图片生成与参考图编辑能力（GPT Image）。
+你拥有 AI 图片生成与参考图编辑能力（OpenAI Images / xAI Grok Imagine）。
 当用户要求生成、绘制、创作图片，或上传图片后要求修改时，调用 generate_image。
 - prompt：详细描述生成内容或编辑要求。
 - size：可选 "1024x1024" / "1536x1024" / "1024x1536" / "auto"。
@@ -77,7 +77,7 @@ function collectReferenceImages(context: GptImageContext): GptImageReference[] {
     try {
       images.push({ data: readAttachmentAsBase64(attachment.localPath), mediaType: attachment.mediaType, filename: attachment.filename || 'reference-image' })
     } catch (error) {
-      console.warn(`[GPT Image] 读取参考图失败: ${attachment.localPath}`, error)
+      console.warn(`[AI 图片生成] 读取参考图失败: ${attachment.localPath}`, error)
     }
   }
   return images
@@ -117,7 +117,7 @@ export async function executeGptImageTool(toolCall: ToolCall, context: GptImageC
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error('[GPT Image] 保存附件失败:', error)
+    console.error('[AI 图片生成] 保存附件失败:', error)
     return errorResult(toolCall.id, `图片生成结果无法保存，本次不会报告为成功：${message}`)
   }
 }

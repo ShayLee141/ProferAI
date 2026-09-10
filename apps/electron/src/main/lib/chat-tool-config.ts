@@ -15,8 +15,10 @@ import type {
 } from '@profer/shared'
 
 export type GptImageMode = 'official' | 'byok'
+export type GptImageProvider = 'openai' | 'xai'
 
 export interface GptImageCredentials {
+  provider: GptImageProvider
   mode: GptImageMode
   apiKey: string
   baseUrl: string
@@ -39,19 +41,85 @@ function normalizeGptImageMode(value: string | undefined): GptImageMode {
   return value === 'byok' ? 'byok' : 'official'
 }
 
+function normalizeGptImageProvider(value: string | undefined): GptImageProvider {
+  return value === 'xai' ? 'xai' : 'openai'
+}
+
+function providerField(provider: GptImageProvider, field: 'ApiKeyEncrypted' | 'BaseUrl' | 'Model'): string {
+  return `${provider}${field}`
+}
+
+function getStoredProviderValue(
+  raw: Record<string, string>,
+  provider: GptImageProvider,
+  field: 'BaseUrl' | 'Model',
+): string {
+  const providerValue = raw[providerField(provider, field)]
+  if (providerValue !== undefined) return providerValue
+  // 兼容旧版只有一套配置的 GPT Image 工具。
+  return raw.provider === provider ? raw[field === 'BaseUrl' ? 'baseUrl' : 'model'] ?? '' : ''
+}
+
+function getStoredProviderApiKey(raw: Record<string, string>, provider: GptImageProvider): string {
+  return raw[providerField(provider, 'ApiKeyEncrypted')] ?? (provider === 'openai' ? raw.apiKeyEncrypted : '') ?? ''
+}
+
+function decryptStoredProviderApiKey(raw: Record<string, string>, provider: GptImageProvider): string {
+  const encrypted = getStoredProviderApiKey(raw, provider)
+  if (!encrypted) return ''
+  try {
+    return decryptToken(encrypted)
+  } catch (error) {
+    console.error(`[Chat 工具配置] ${provider} 生图 Key 解密失败:`, error)
+    return ''
+  }
+}
+
 /** 将旧版明文 apiKey 升级为加密 apiKeyEncrypted；调用方负责保存。 */
 function migrateGptImageCredentials(config: ChatToolsFileConfig): boolean {
   const raw = config.toolCredentials['gpt-image']
   if (!raw) return false
   let changed = false
-  if (!raw.mode) {
-    // 老版本只有自带 Key 配置；保留其原有可用语义，而空配置才默认官方模式。
-    raw.mode = raw.apiKey || raw.apiKeyEncrypted ? 'byok' : 'official'
+  // 当前版本之前只有一套配置；若存在过渡版本写入的 provider，则保留它，
+  // 否则按历史语义归入 OpenAI，避免迁移时把用户的 xAI Key 放错 provider。
+  const legacyProvider: GptImageProvider = raw.provider === 'xai' ? 'xai' : 'openai'
+  if (!raw.provider) {
+    raw.provider = legacyProvider
     changed = true
   }
-  if (raw.apiKey && !raw.apiKeyEncrypted) {
-    raw.apiKeyEncrypted = encryptToken(raw.apiKey)
+  if (!raw.mode) {
+    // 老版本只有自带 Key 配置；保留其原有可用语义，而空配置才默认官方模式。
+    const hasStoredKey = raw.apiKey || raw.apiKeyEncrypted || raw.openaiApiKeyEncrypted || raw.xaiApiKeyEncrypted
+    raw.mode = hasStoredKey ? 'byok' : 'official'
+    changed = true
+  }
+  const legacyApiKeyField = providerField(legacyProvider, 'ApiKeyEncrypted')
+  if (raw.apiKey && !raw[legacyApiKeyField]) {
+    raw[legacyApiKeyField] = encryptToken(raw.apiKey)
+    changed = true
+  }
+  if (raw.apiKey) {
     delete raw.apiKey
+    changed = true
+  }
+  if (raw.apiKeyEncrypted && !raw[legacyApiKeyField]) {
+    raw[legacyApiKeyField] = raw.apiKeyEncrypted
+    changed = true
+  }
+  if (raw.apiKeyEncrypted) {
+    delete raw.apiKeyEncrypted
+    changed = true
+  }
+  const legacyBaseUrlField = providerField(legacyProvider, 'BaseUrl')
+  if (raw.baseUrl !== undefined) {
+    if (raw[legacyBaseUrlField] === undefined) raw[legacyBaseUrlField] = raw.baseUrl
+    delete raw.baseUrl
+    changed = true
+  }
+  const legacyModelField = providerField(legacyProvider, 'Model')
+  if (raw.model !== undefined) {
+    if (raw[legacyModelField] === undefined) raw[legacyModelField] = raw.model
+    delete raw.model
     changed = true
   }
   return changed
@@ -114,15 +182,20 @@ export function updateToolCredentials(
   }
 
   const existing = config.toolCredentials['gpt-image'] ?? {}
+  const provider = normalizeGptImageProvider(credentials.provider ?? existing.provider)
   const next: Record<string, string> = {
     ...existing,
-    mode: normalizeGptImageMode(credentials.mode),
-    baseUrl: credentials.baseUrl?.trim() ?? existing.baseUrl ?? '',
-    model: credentials.model?.trim() ?? existing.model ?? '',
+    provider,
+    mode: normalizeGptImageMode(credentials.mode ?? existing.mode),
+    [providerField(provider, 'BaseUrl')]: credentials.baseUrl?.trim() ?? getStoredProviderValue(existing, provider, 'BaseUrl'),
+    [providerField(provider, 'Model')]: credentials.model?.trim() ?? getStoredProviderValue(existing, provider, 'Model'),
   }
   if (credentials.apiKey?.trim())
-    next.apiKeyEncrypted = encryptToken(credentials.apiKey.trim())
+    next[providerField(provider, 'ApiKeyEncrypted')] = encryptToken(credentials.apiKey.trim())
   delete next.apiKey
+  delete next.apiKeyEncrypted
+  delete next.baseUrl
+  delete next.model
   config.toolCredentials['gpt-image'] = next
   saveChatToolsConfig(config)
 }
@@ -134,21 +207,15 @@ export function getToolState(toolId: string): ChatToolState {
 }
 
 /** 主进程专用：取得已解密 GPT Image 凭据。 */
-export function getGptImageCredentials(): GptImageCredentials {
+export function getGptImageCredentials(providerOverride?: string): GptImageCredentials {
   const raw = getChatToolsConfig().toolCredentials['gpt-image'] ?? {}
-  let apiKey = ''
-  if (raw.apiKeyEncrypted) {
-    try {
-      apiKey = decryptToken(raw.apiKeyEncrypted)
-    } catch (error) {
-      console.error('[Chat 工具配置] GPT Image Key 解密失败:', error)
-    }
-  }
+  const provider = normalizeGptImageProvider(providerOverride ?? raw.provider)
   return {
+    provider,
     mode: normalizeGptImageMode(raw.mode),
-    apiKey,
-    baseUrl: raw.baseUrl ?? '',
-    model: raw.model ?? '',
+    apiKey: decryptStoredProviderApiKey(raw, provider),
+    baseUrl: getStoredProviderValue(raw, provider, 'BaseUrl'),
+    model: getStoredProviderValue(raw, provider, 'Model'),
   }
 }
 
@@ -156,11 +223,12 @@ export function getGptImageCredentials(): GptImageCredentials {
  * 获取工具凭据。GPT Image 的 Key 不可被 renderer 或通用 IPC 读取；仅返回
  * mode/地址/模型与 hasApiKey 状态。其他工具保持现有兼容行为。
  */
-export function getToolCredentials(toolId: string): Record<string, string> {
+export function getToolCredentials(toolId: string, providerOverride?: string): Record<string, string> {
   if (toolId !== 'gpt-image')
     return getChatToolsConfig().toolCredentials[toolId] ?? {}
-  const credentials = getGptImageCredentials()
+  const credentials = getGptImageCredentials(providerOverride)
   return {
+    provider: credentials.provider,
     mode: credentials.mode,
     baseUrl: credentials.baseUrl,
     model: credentials.model,

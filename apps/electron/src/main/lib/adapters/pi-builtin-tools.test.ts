@@ -15,7 +15,7 @@ let generatedImageResult: unknown = undefined
 mock.module('../chat-tool-config', () => ({
   getToolState: (toolId: string) => ({ enabled: toolId === 'web-search' ? webSearchToolAvailable : imageToolAvailable }),
   getToolCredentials: (toolId: string) => toolId === 'web-search' && webSearchToolAvailable ? { apiKey: 'test-tavily-key' } : {},
-  getGptImageCredentials: () => ({ mode: 'official', apiKey: '', baseUrl: '', model: '' }),
+  getGptImageCredentials: () => ({ provider: 'openai', mode: 'official', apiKey: '', baseUrl: '', model: '' }),
 }))
 mock.module('../auth-service', () => ({
   getTeamAuth: () => ({ token: 'test' }), getTeamAuthWithRefresh: async () => undefined,

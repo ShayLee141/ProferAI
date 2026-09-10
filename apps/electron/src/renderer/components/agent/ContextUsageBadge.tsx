@@ -320,24 +320,23 @@ export function ContextUsageBadge({
   const displayCacheRead = hasCurrent ? cacheReadTokens : stable?.cacheReadTokens
   const displayCacheCreation = hasCurrent ? cacheCreationTokens : stable?.cacheCreationTokens
 
-  // 从未有过 usage 数据 → 不显示
-  if (!displayTokens || displayTokens <= 0) return null
+  // 即使当前会话还没有 usage 数据，也保留工具栏按钮，避免工具栏因首轮消息前后跳动。
+  const hasUsage = Boolean(displayTokens && displayTokens > 0)
+  const safeDisplayTokens = displayTokens ?? 0
 
   // 警告阈值：基于压缩阈值（contextWindow × 0.775 × 80%）
   const compactThreshold = displayWindow
     ? Math.floor(displayWindow * COMPACT_THRESHOLD_RATIO)
     : undefined
-  const isWarning = compactThreshold
-    ? displayTokens / compactThreshold >= WARNING_RATIO
-    : false
+  const isWarning = Boolean(compactThreshold && hasUsage && safeDisplayTokens / compactThreshold >= WARNING_RATIO)
 
-  const ratio = displayWindow ? displayTokens / displayWindow : 0
+  const ratio = displayWindow && hasUsage ? safeDisplayTokens / displayWindow : 0
 
   // 纯输入 = 总上下文 - 缓存读取 - 缓存写入
-  const pureInput = displayTokens - (displayCacheRead ?? 0) - (displayCacheCreation ?? 0)
+  const pureInput = safeDisplayTokens - (displayCacheRead ?? 0) - (displayCacheCreation ?? 0)
 
-  const percent = displayWindow
-    ? Math.round((displayTokens / displayWindow) * 100)
+  const percent = displayWindow && hasUsage
+    ? Math.round((safeDisplayTokens / displayWindow) * 100)
     : undefined
 
   /** 计算数据时效提示（普通变量，非 useMemo — 避免在 isCompacting early return 后 hook 数不一致） */
@@ -390,17 +389,23 @@ export function ContextUsageBadge({
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <div className="flex flex-col gap-1.5">
-          {pureInput > 0 && <DetailRow label="输入" value={pureInput.toLocaleString()} />}
-          {displayOutput ? <DetailRow label="输出" value={displayOutput.toLocaleString()} /> : null}
-          {displayCacheCreation ? <DetailRow label="缓存写入" value={displayCacheCreation.toLocaleString()} /> : null}
-          {displayCacheRead ? <DetailRow label="缓存读取" value={displayCacheRead.toLocaleString()} /> : null}
+          {hasUsage ? (
+            <>
+              {pureInput > 0 && <DetailRow label="输入" value={pureInput.toLocaleString()} />}
+              {displayOutput ? <DetailRow label="输出" value={displayOutput.toLocaleString()} /> : null}
+              {displayCacheCreation ? <DetailRow label="缓存写入" value={displayCacheCreation.toLocaleString()} /> : null}
+              {displayCacheRead ? <DetailRow label="缓存读取" value={displayCacheRead.toLocaleString()} /> : null}
+            </>
+          ) : (
+            <div className="py-1 text-center text-xs text-muted-foreground">暂无上下文使用数据</div>
+          )}
 
-          {displayWindow ? (
+          {displayWindow && hasUsage ? (
             <>
               <div className="h-px bg-border my-0.5" />
               <DetailRow
                 label="上下文"
-                value={`${formatTokens(displayTokens)} / ${formatTokens(displayWindow)}`}
+                value={`${formatTokens(safeDisplayTokens)} / ${formatTokens(displayWindow)}`}
                 emphasized
               />
               {percent != null && (

@@ -20,6 +20,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { SettingsSection, SettingsCard } from './primitives'
 import { chatToolsAtom } from '@/atoms/chat-tool-atoms'
 import { VoiceInputSettings } from './VoiceInputSettings'
@@ -237,8 +244,16 @@ function WebSearchSettings(): React.ReactElement {
   )
 }
 
-/** GPT Image 生图工具设置区域 */
+type GptImageProvider = 'openai' | 'xai'
+
+const IMAGE_PROVIDER_OPTIONS: Array<{ value: GptImageProvider; label: string }> = [
+  { value: 'openai', label: 'OpenAI Images' },
+  { value: 'xai', label: 'xAI Grok Imagine' },
+]
+
+/** AI 图片生成工具设置区域 */
 function GptImageSettings(): React.ReactElement {
+  const [provider, setProvider] = React.useState<GptImageProvider>('openai')
   const [mode, setMode] = React.useState<'official' | 'byok'>('official')
   const [apiKey, setApiKey] = React.useState('')
   const [hasApiKey, setHasApiKey] = React.useState(false)
@@ -254,7 +269,8 @@ function GptImageSettings(): React.ReactElement {
   } | null>(null)
   const setChatTools = useSetAtom(chatToolsAtom)
   const savedCredentialsRef = React.useRef({
-    mode: 'official',
+    provider: 'openai' as GptImageProvider,
+    mode: 'official' as 'official' | 'byok',
     baseUrl: '',
     model: '',
   })
@@ -267,24 +283,28 @@ function GptImageSettings(): React.ReactElement {
       .then(([tools, credentials]) => {
         const tool = tools.find((t) => t.meta.id === 'gpt-image')
         if (tool) setEnabled(tool.enabled)
+        const loadedProvider = credentials.provider === 'xai' ? 'xai' : 'openai'
         const loadedMode = credentials.mode === 'byok' ? 'byok' : 'official'
+        setProvider(loadedProvider)
         setMode(loadedMode)
         setHasApiKey(credentials.hasApiKey === 'true')
         setBaseUrl(credentials.baseUrl || '')
         setModel(credentials.model || '')
         savedCredentialsRef.current = {
+          provider: loadedProvider,
           mode: loadedMode,
           baseUrl: credentials.baseUrl || '',
           model: credentials.model || '',
         }
       })
-      .catch((err: unknown) => console.error('[GPT Image 设置] 加载失败:', err))
+      .catch((err: unknown) => console.error('[图片生成设置] 加载失败:', err))
       .finally(() => setLoading(false))
   }, [])
 
   const saveCredentials = React.useCallback(
     async (nextMode = mode): Promise<void> => {
       const current = {
+        provider,
         mode: nextMode,
         apiKey: apiKey.trim(),
         baseUrl: baseUrl.trim(),
@@ -293,6 +313,7 @@ function GptImageSettings(): React.ReactElement {
       const saved = savedCredentialsRef.current
       if (
         !current.apiKey &&
+        current.provider === saved.provider &&
         current.mode === saved.mode &&
         current.baseUrl === saved.baseUrl &&
         current.model === saved.model
@@ -300,6 +321,7 @@ function GptImageSettings(): React.ReactElement {
         return
       await window.electronAPI.updateChatToolCredentials('gpt-image', current)
       savedCredentialsRef.current = {
+        provider: current.provider,
         mode: current.mode,
         baseUrl: current.baseUrl,
         model: current.model,
@@ -310,8 +332,39 @@ function GptImageSettings(): React.ReactElement {
       }
       await refreshChatTools(setChatTools)
     },
-    [apiKey, baseUrl, mode, model, setChatTools],
+    [apiKey, baseUrl, mode, model, provider, setChatTools],
   )
+
+  const handleProviderChange = async (nextProvider: GptImageProvider): Promise<void> => {
+    try {
+      // 先保存当前 provider，保证切换时不会丢失刚输入但尚未 blur 的内容。
+      await saveCredentials()
+      const credentials = await window.electronAPI.getChatToolCredentials('gpt-image', nextProvider)
+      // provider 选择本身也要立即持久化，否则用户重启设置页后会回到旧 provider。
+      await window.electronAPI.updateChatToolCredentials('gpt-image', {
+        provider: nextProvider,
+        mode,
+        baseUrl: credentials.baseUrl || '',
+        model: credentials.model || '',
+      })
+      setProvider(nextProvider)
+      setApiKey('')
+      setHasApiKey(credentials.hasApiKey === 'true')
+      setBaseUrl(credentials.baseUrl || '')
+      setModel(credentials.model || '')
+      setTestResult(null)
+      savedCredentialsRef.current = {
+        provider: nextProvider,
+        mode,
+        baseUrl: credentials.baseUrl || '',
+        model: credentials.model || '',
+      }
+      await refreshChatTools(setChatTools)
+    } catch (error) {
+      console.error('[图片生成设置] provider 切换失败:', error)
+      toast.error('图片 provider 切换失败')
+    }
+  }
 
   const handleModeChange = async (
     nextMode: 'official' | 'byok',
@@ -319,24 +372,25 @@ function GptImageSettings(): React.ReactElement {
     setMode(nextMode)
     setTestResult(null)
     try {
+      // saveCredentials 使用当前 provider，并显式覆盖本次切换后的 mode。
       await saveCredentials(nextMode)
       toast.success(
         nextMode === 'official'
           ? '已切换为 Profer 官方生图'
-          : '已切换为自带 OpenAI Key',
+          : '已切换为自带 API Key',
       )
     } catch (error) {
-      console.error('[GPT Image 设置] 切换模式失败:', error)
-      toast.error('模式切换保存失败')
+      console.error('[图片生成设置] 模式切换失败:', error)
+      toast.error('图片生成模式切换保存失败')
     }
   }
   const handleBlurSave = async (): Promise<void> => {
     try {
       await saveCredentials()
-      toast.success('GPT Image 设置已保存')
+      toast.success('AI 图片生成设置已保存')
     } catch (error) {
-      console.error('[GPT Image 设置] 保存失败:', error)
-      toast.error('GPT Image 设置保存失败')
+      console.error('[图片生成设置] 保存失败:', error)
+      toast.error('AI 图片生成设置保存失败')
     }
   }
   const handleToggle = async (checked: boolean): Promise<void> => {
@@ -347,14 +401,14 @@ function GptImageSettings(): React.ReactElement {
       setEnabled(checked)
       await refreshChatTools(setChatTools)
     } catch (error) {
-      console.error('[GPT Image 设置] 切换失败:', error)
+      console.error('[图片生成设置] 切换失败:', error)
     }
   }
   const handleTest = async (): Promise<void> => {
     try {
       await saveCredentials()
     } catch (error) {
-      console.error('[GPT Image 设置] 测试前保存失败:', error)
+      console.error('[图片生成设置] 测试前保存失败:', error)
       return
     }
     setTesting(true)
@@ -379,12 +433,30 @@ function GptImageSettings(): React.ReactElement {
 
   return (
     <SettingsSection
-      title="GPT Image"
+      title="AI 图片生成"
       description="在 Chat 和已启用工具的 Agent 会话中生成图片或编辑参考图"
       action={<Switch checked={enabled} onCheckedChange={handleToggle} />}
     >
       <SettingsCard divided={false}>
         <div className="space-y-4 p-4">
+          {mode === 'byok' && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">图片 provider</label>
+              <Select value={provider} onValueChange={(value) => void handleProviderChange(value as GptImageProvider)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {IMAGE_PROVIDER_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                xAI 官方地址为 https://api.x.ai，默认模型为 grok-imagine-image-2.0。
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
               type="button"
@@ -401,9 +473,9 @@ function GptImageSettings(): React.ReactElement {
               onClick={() => void handleModeChange('byok')}
               className={`rounded-lg border p-3 text-left transition-colors ${mode === 'byok' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}
             >
-              <p className="text-sm font-medium">自带 OpenAI Key</p>
+              <p className="text-sm font-medium">自带 API Key</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                使用自己的 OpenAI-compatible 服务；不会扣 Profer 积分。
+                使用下方选择的图片 provider；不会扣 Profer 积分。
               </p>
             </button>
           </div>
@@ -426,7 +498,7 @@ function GptImageSettings(): React.ReactElement {
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">
-                  API Key{' '}
+                  {provider === 'xai' ? 'xAI API Key' : 'OpenAI API Key'}{' '}
                   {hasApiKey && (
                     <span className="text-xs font-normal text-muted-foreground">
                       （已配置）
@@ -436,7 +508,7 @@ function GptImageSettings(): React.ReactElement {
                 <div className="relative">
                   <Input
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder={hasApiKey ? '填写新 Key 以替换' : 'sk-...'}
+                    placeholder={hasApiKey ? '填写新 Key 以替换' : provider === 'xai' ? 'xai-...' : 'sk-...'}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     onBlur={() => void handleBlurSave()}
@@ -455,19 +527,19 @@ function GptImageSettings(): React.ReactElement {
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">API 地址</label>
                 <Input
-                  placeholder="https://api.openai.com"
+                  placeholder={provider === 'xai' ? 'https://api.x.ai' : 'https://api.openai.com'}
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
                   onBlur={() => void handleBlurSave()}
                 />
                 <p className="text-xs text-muted-foreground">
-                  留空使用 OpenAI 官方地址；支持 OpenAI-compatible 代理。
+                  {provider === 'xai' ? '留空使用 xAI 官方地址；也支持兼容 Images API 的中转服务。' : '留空使用 OpenAI 官方地址；支持 OpenAI-compatible 代理。'}
                 </p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">模型</label>
                 <Input
-                  placeholder="gpt-image-2"
+                  placeholder={provider === 'xai' ? 'grok-imagine-image-2.0' : 'gpt-image-2'}
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   onBlur={() => void handleBlurSave()}
@@ -609,7 +681,7 @@ export function ToolSettings(): React.ReactElement {
       {/* 联网搜索工具 */}
       <WebSearchSettings />
 
-      {/* GPT Image 生图工具 */}
+      {/* AI 图片生成工具 */}
       <GptImageSettings />
 
       {/* 自定义工具 */}

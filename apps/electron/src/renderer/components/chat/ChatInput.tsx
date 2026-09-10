@@ -24,7 +24,8 @@ import { ContextSettingsPopover } from './ContextSettingsPopover'
 import { ToolSelectorPopover } from './ToolSelectorPopover'
 import { AttachmentPreviewItem } from './AttachmentPreviewItem'
 import { RichTextInput } from '@/components/ai-elements/rich-text-input'
-import { SpeechButton } from '@/components/ai-elements/speech-button'
+import { SpeechButton, useLoadVoiceDictationSettings } from '@/components/ai-elements/speech-button'
+import { voiceDictationEnabledAtom } from '@/atoms/voice-dictation-atoms'
 import { InputToolbarOverflow, type ToolbarItem } from '@/components/ai-elements/InputToolbarOverflow'
 import { AgentComposerToolTrigger } from '@/components/ai-elements/composer/ComposerTool'
 import { getActiveAccelerator, getAcceleratorDisplay } from '@/lib/shortcut-registry'
@@ -327,6 +328,8 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     return () => window.removeEventListener('profer:focus-input', handler)
   }, [])
 
+  const voiceDictationEnabled = useAtomValue(voiceDictationEnabledAtom)
+  useLoadVoiceDictationSettings()
   const toolbarItems = React.useMemo<ToolbarItem[]>(() => [
     // 模型选择是 Chat 的一级动作，固定放在最左侧；窄窗口时也优先保留。
     { key: 'model', node: <ModelSelector composerTool tabletMode={tabletMode} /> },
@@ -359,11 +362,11 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
         </AgentComposerToolTrigger>
       ),
     },
-    { key: 'speech', node: <SpeechButton composerTool tabletMode={tabletMode} /> },
+    ...(voiceDictationEnabled ? [{ key: 'speech', node: <SpeechButton composerTool tabletMode={tabletMode} /> }] : []),
     { key: 'tools', node: <ToolSelectorPopover composerTool tabletMode={tabletMode} /> },
     { key: 'context', node: <ContextSettingsPopover composerTool tabletMode={tabletMode} /> },
     { key: 'clear', node: <ClearContextButton composerTool tabletMode={tabletMode} onClick={onClearContext} /> },
-  ], [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, onClearContext, tabletMode])
+  ], [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, onClearContext, tabletMode, voiceDictationEnabled])
 
   const trailingNode = streaming ? (
     <AgentComposerToolTrigger

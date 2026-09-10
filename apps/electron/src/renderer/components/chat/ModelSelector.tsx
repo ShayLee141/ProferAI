@@ -346,13 +346,15 @@ export function ModelSelector({
               ? (showChannelInTrigger ? `${displayChannelName} · ${displayModelInfo.modelName}` : displayModelInfo.modelName)
               : '选择模型'}
             className={cn(
-              getAgentComposerToolTriggerClass('default', tabletMode, 'model-selector-trigger flex w-auto items-center gap-1.5 px-2 text-xs'),
-              compact && 'justify-center px-0',
+              getAgentComposerToolTriggerClass('default', tabletMode, 'model-selector-trigger'),
+              compact
+                ? 'justify-center'
+                : 'flex w-auto items-center gap-1.5 px-2 text-xs',
             )}
           >
             {displayModelInfo ? (
-              <img src={getModelLogo(displayModelInfo.modelId, displayModelInfo.provider)} alt={displayModelInfo.modelName} className="size-4 rounded object-cover" />
-            ) : <Cpu className="size-3.5" />}
+              <img src={getModelLogo(displayModelInfo.modelId, displayModelInfo.provider)} alt={displayModelInfo.modelName} className="size-5 rounded object-cover" />
+            ) : <Cpu className="size-5" />}
             {!compact && <><span className="max-w-[200px] truncate">{displayModelInfo ? (showChannelInTrigger ? `${displayChannelName} · ${displayModelInfo.modelName}` : displayModelInfo.modelName) : '选择模型'}</span><ChevronDown className="size-3" /></>}
           </button>
         </AgentComposerToolTooltip>

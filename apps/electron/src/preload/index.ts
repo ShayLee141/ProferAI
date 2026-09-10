@@ -909,7 +909,7 @@ export interface ElectronAPI {
   getChatTools: () => Promise<ChatToolInfo[]>
 
   /** 获取工具凭据 */
-  getChatToolCredentials: (toolId: string) => Promise<Record<string, string>>
+  getChatToolCredentials: (toolId: string, provider?: string) => Promise<Record<string, string>>
 
   /** 更新工具开关状态 */
   updateChatToolState: (toolId: string, state: ChatToolState) => Promise<void>
@@ -2624,8 +2624,8 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(CHAT_TOOL_IPC_CHANNELS.GET_ALL_TOOLS)
   },
 
-  getChatToolCredentials: (toolId: string) => {
-    return ipcRenderer.invoke(CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS, toolId)
+  getChatToolCredentials: (toolId: string, provider?: string) => {
+    return ipcRenderer.invoke(CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS, toolId, provider)
   },
 
   updateChatToolState: (toolId: string, state: ChatToolState) => {

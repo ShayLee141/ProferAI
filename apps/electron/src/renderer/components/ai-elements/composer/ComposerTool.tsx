@@ -16,7 +16,8 @@ export type AgentComposerToolPlacement = 'toolbar' | 'overflow'
 export const AGENT_COMPOSER_TOOL_BASE_CLASS = [
   // 输入工具栏是同一组平级操作：所有状态共享同一种 surface hover；
   // 语义状态只能影响前景内容，不再改变按钮底材。
-  'shrink-0 rounded-full bg-transparent transition-colors duration-150 hover:bg-accent',
+  // 统一为「圆角方形」（rounded-md），与带文字工具共用同一壳层，避免图标间距被圆形/方角混用打乱。
+  'shrink-0 rounded-md bg-transparent transition-colors duration-150 hover:bg-accent',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
   'disabled:cursor-not-allowed disabled:opacity-40',
 ].join(' ')

@@ -4011,8 +4011,8 @@ export function registerIpcHandlers(): void {
   // 获取工具凭据
   ipcMain.handle(
     CHAT_TOOL_IPC_CHANNELS.GET_TOOL_CREDENTIALS,
-    async (_, toolId: string): Promise<Record<string, string>> => {
-      return getToolCredentials(toolId)
+    async (_, toolId: string, provider?: string): Promise<Record<string, string>> => {
+      return getToolCredentials(toolId, provider)
     }
   )
 
@@ -4084,7 +4084,7 @@ export function registerIpcHandlers(): void {
           return { success: false, message: `连接失败: ${msg}` }
         }
       }
-      // GPT Image 生图工具测试：官方模式走 Profer 登录态，自带 Key 模式才走 OpenAI API Key。
+      // AI 图片生成工具测试：官方模式走 Profer 登录态，自带 Key 模式按所选 provider 测试。
       if (toolId === 'gpt-image') {
         const { testGptImageConnection } = await import('./lib/gpt-image-connection')
         return testGptImageConnection()

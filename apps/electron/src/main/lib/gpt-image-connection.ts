@@ -1,14 +1,21 @@
 import { getGptImageCredentials, getToolCredentials } from './chat-tool-config'
 
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com'
+const DEFAULT_XAI_BASE_URL = 'https://api.x.ai'
+
+function normalizeBaseUrl(value: string, fallback: string): string {
+  return (value.trim() || fallback).replace(/\/+$/, '').replace(/\/v1$/i, '')
+}
+
 export interface GptImageConnectionTestResult {
   success: boolean
   message: string
 }
 
 /**
- * 测试 GPT Image 连接，不执行生图，避免测试动作消耗积分或产生图片。
+ * 测试图片生成连接，不执行生图，避免测试动作产生图片或费用。
  * 官方模式检查 Profer 团队账号与官方模型健康接口；自带 Key 模式检查
- * OpenAI-compatible 的 models 接口。
+ * 对应 provider 的 models 接口。
  */
 export async function testGptImageConnection(): Promise<GptImageConnectionTestResult> {
   const credentials = getGptImageCredentials()
@@ -43,11 +50,15 @@ export async function testGptImageConnection(): Promise<GptImageConnectionTestRe
   }
 
   if (!credentials.apiKey) {
-    return { success: false, message: '请先填写 OpenAI API Key' }
+    return { success: false, message: `请先填写${credentials.provider === 'xai' ? ' xAI' : ' OpenAI'} API Key` }
   }
 
   try {
-    const baseUrl = credentials.baseUrl?.trim().replace(/\/+$/, '') || 'https://api.openai.com'
+    const providerLabel = credentials.provider === 'xai' ? 'xAI Grok' : 'OpenAI'
+    const baseUrl = normalizeBaseUrl(
+      credentials.baseUrl,
+      credentials.provider === 'xai' ? DEFAULT_XAI_BASE_URL : DEFAULT_OPENAI_BASE_URL,
+    )
     const response = await fetch(`${baseUrl}/v1/models`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${credentials.apiKey}` },
@@ -55,9 +66,9 @@ export async function testGptImageConnection(): Promise<GptImageConnectionTestRe
     })
     if (!response.ok) {
       const errorText = await response.text()
-      return { success: false, message: `API 请求失败 (${response.status}): ${errorText.slice(0, 200)}` }
+      return { success: false, message: `${providerLabel} API 请求失败 (${response.status}): ${errorText.slice(0, 200)}` }
     }
-    return { success: true, message: '连接成功，OpenAI-compatible API 可用' }
+    return { success: true, message: `连接成功，${providerLabel} Images API 可用` }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return { success: false, message: `连接失败: ${message}` }
@@ -71,7 +82,7 @@ export async function testLegacyImageToolConnection(toolId: string): Promise<Gpt
     return { success: false, message: '请先填写 OpenAI API Key' }
   }
   try {
-    const baseUrl = credentials.baseUrl?.trim().replace(/\/+$/, '') || 'https://api.openai.com'
+    const baseUrl = normalizeBaseUrl(credentials.baseUrl ?? '', DEFAULT_OPENAI_BASE_URL)
     const response = await fetch(`${baseUrl}/v1/models`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${credentials.apiKey}` },

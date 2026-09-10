@@ -7,6 +7,7 @@ const DEFAULT_BASE_URL = 'https://api.openai.com'
 const DEFAULT_OFFICIAL_IMAGE_RECOVERY_DELAYS_MS = [2_000, 5_000, 10_000, 15_000, 20_000, 20_000] as const
 let officialImageRecoveryDelaysMs: readonly number[] = DEFAULT_OFFICIAL_IMAGE_RECOVERY_DELAYS_MS
 export const DEFAULT_GPT_IMAGE_MODEL = 'gpt-image-2'
+export const DEFAULT_XAI_IMAGE_MODEL = 'grok-imagine-image-2.0'
 export const GPT_IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536', 'auto'] as const
 export const GPT_IMAGE_QUALITIES = ['auto', 'low', 'medium', 'high'] as const
 export const MAX_GPT_IMAGE_REFERENCES = 4
@@ -53,13 +54,41 @@ export function __setOfficialImageRecoveryDelaysForTest(delays: readonly number[
 }
 
 interface GptImageResponse {
-  data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>
+  data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string; mime_type?: string }>
   error?: { message?: string; code?: string; type?: string } | string
   code?: string
 }
 
 function normalizeBaseUrl(value: string): string {
-  return (value.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '')
+  return (value.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '').replace(/\/v1$/i, '')
+}
+
+/** xAI 图片地址既支持填写根地址，也支持填写已经包含 /v1 的地址。 */
+function normalizeXaiBaseUrl(value: string): string {
+  return (value.trim() || 'https://api.x.ai').replace(/\/+$/, '').replace(/\/v1$/i, '')
+}
+
+function xaiAspectRatio(size: GptImageSize): string {
+  switch (size) {
+    case '1536x1024': return '3:2'
+    case '1024x1536': return '2:3'
+    case 'auto': return 'auto'
+    default: return '1:1'
+  }
+}
+
+function xaiResolution(size: GptImageSize): '1k' | '2k' {
+  // 现有工具的横/竖大尺寸对应 xAI 的 2k 档位；方图和 auto 使用 1k。
+  return size === '1536x1024' || size === '1024x1536' ? '2k' : '1k'
+}
+
+/** GPT 工具的质量档位映射到 Grok Imagine 当前支持的 low/medium。 */
+function xaiQuality(quality: GptImageQuality): 'low' | 'medium' {
+  return quality === 'low' ? 'low' : 'medium'
+}
+
+function supportsXaiImagineControls(model: string): boolean {
+  return model.toLowerCase().includes('grok-imagine')
 }
 
 export function normalizeGptImageSize(value: unknown): GptImageSize {
@@ -123,7 +152,7 @@ async function resolveImage(
     const base64 = item.b64_json.replace(/^data:image\/[-\w+.]+;base64,/, '').trim()
     if (!base64) return undefined
     const bytes = Buffer.from(base64, 'base64')
-    const mediaType = detectMediaType(bytes)
+    const mediaType = detectMediaType(bytes, item.mime_type)
     return bytes.length > 0 && mediaType ? { bytes, mediaType } : undefined
   }
   if (!item.url) return undefined
@@ -134,7 +163,7 @@ async function resolveImage(
     })
     if (!response.ok) return undefined
     const bytes = Buffer.from(await response.arrayBuffer())
-    const mediaType = detectMediaType(bytes, response.headers.get('content-type') ?? 'image/png')
+    const mediaType = detectMediaType(bytes, item.mime_type ?? response.headers.get('content-type') ?? 'image/png')
     return bytes.length > 0 && mediaType ? { bytes, mediaType } : undefined
   } catch {
     return undefined
@@ -206,7 +235,7 @@ async function callOfficial(
       if (recovered) response = recovered
     } catch (error) {
       if (request.signal?.aborted) throw error
-      console.warn('[GPT Image] 504 recovery check failed:', error)
+      console.warn('[AI 图片生成] 504 恢复检查失败:', error)
     }
   }
   if (response.status !== 401 || request.signal?.aborted) return response
@@ -220,7 +249,7 @@ async function callOfficial(
   return response
 }
 
-async function callByok(request: Pick<GptImageRequest, 'prompt' | 'signal'> & { size: GptImageSize; quality: GptImageQuality; references: GptImageReference[]; apiKey: string; baseUrl: string; model: string }): Promise<Response> {
+async function callOpenAiByok(request: Pick<GptImageRequest, 'prompt' | 'signal'> & { size: GptImageSize; quality: GptImageQuality; references: GptImageReference[]; apiKey: string; baseUrl: string; model: string }): Promise<Response> {
   const endpoint = request.references.length ? '/v1/images/edits' : '/v1/images/generations'
   if (!request.references.length) {
     return fetch(`${request.baseUrl}${endpoint}`, {
@@ -240,9 +269,41 @@ async function callByok(request: Pick<GptImageRequest, 'prompt' | 'signal'> & { 
   return fetch(`${request.baseUrl}${endpoint}`, { method: 'POST', headers: { Authorization: `Bearer ${request.apiKey}` }, body: form, signal: request.signal })
 }
 
+async function callXaiByok(request: Pick<GptImageRequest, 'prompt' | 'signal'> & { size: GptImageSize; quality: GptImageQuality; references: GptImageReference[]; apiKey: string; baseUrl: string; model: string }): Promise<Response> {
+  const endpoint = request.references.length ? '/v1/images/edits' : '/v1/images/generations'
+  const body: Record<string, unknown> = {
+    model: request.model,
+    prompt: request.prompt,
+    response_format: 'b64_json',
+    n: 1,
+  }
+  // aspect_ratio、resolution 和 quality 是 Grok Imagine 模型参数；用户填写其它
+  // 兼容模型时不发送这些字段，避免把 provider-specific 参数变成 400。
+  if (supportsXaiImagineControls(request.model)) {
+    body.aspect_ratio = xaiAspectRatio(request.size)
+    body.resolution = xaiResolution(request.size)
+    if (request.model.toLowerCase() === DEFAULT_XAI_IMAGE_MODEL) body.quality = xaiQuality(request.quality)
+  }
+  if (request.references.length) {
+    // xAI Images API 的编辑接口要求 JSON；本地图片通过 data URL 传入，不能发送
+    // OpenAI images.edit 使用的 multipart/form-data image[] 字段。单图使用 image，
+    // 多图使用 images，二者在 xAI API 中互斥。
+    const images = request.references.slice(0, MAX_GPT_IMAGE_REFERENCES).map((reference) => ({
+      type: 'image_url',
+      url: `data:${reference.mediaType};base64,${reference.data}`,
+    }))
+    if (images.length === 1) body.image = { ...images[0], type: 'image_url' }
+    else body.images = images
+  }
+  return fetch(`${request.baseUrl}${endpoint}`, {
+    method: 'POST', signal: request.signal,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${request.apiKey}` },
+    body: JSON.stringify(body),
+  })
+}
+
 /**
- * The sole GPT Image provider boundary for Chat and Agent callers. It does not create
- * Chat attachments or Agent artifacts, and it never exposes credentials in its result.
+ * Chat 与 Agent 共用的 AI 图片 provider 边界；不创建附件或 Agent 产物，也不会在结果中暴露凭据。
  */
 export async function generateGptImage(request: GptImageRequest): Promise<GptImageResult> {
   const prompt = request.prompt.trim()
@@ -253,20 +314,29 @@ export async function generateGptImage(request: GptImageRequest): Promise<GptIma
   const credentials = getGptImageCredentials()
   try {
     const official = credentials.mode === 'official'
-    if (!official && !credentials.apiKey) return { ok: false, error: '请先在“自带 OpenAI Key”模式填写 API Key。' }
+    if (!official && !credentials.apiKey) return { ok: false, error: '请先在“自带 Key”模式填写 API Key。' }
+    const provider = official ? 'openai' : credentials.provider
+    if (!official && provider === 'xai' && references.some((reference) => !['image/png', 'image/jpeg', 'image/webp'].includes(reference.mediaType.toLowerCase()))) {
+      return { ok: false, error: 'xAI Grok Imagine 参考图仅支持 PNG、JPEG 或 WebP。' }
+    }
     const response = official
       ? await callOfficial({ prompt, size, quality, references, idempotencyKey: request.idempotencyKey, signal: request.signal })
-      : await callByok({ prompt, size, quality, references, apiKey: credentials.apiKey, baseUrl: normalizeBaseUrl(credentials.baseUrl), model: credentials.model.trim() || DEFAULT_GPT_IMAGE_MODEL, signal: request.signal })
+      : provider === 'xai'
+        ? await callXaiByok({ prompt, size, quality, references, apiKey: credentials.apiKey, baseUrl: normalizeXaiBaseUrl(credentials.baseUrl || 'https://api.x.ai'), model: credentials.model.trim() || DEFAULT_XAI_IMAGE_MODEL, signal: request.signal })
+        : await callOpenAiByok({ prompt, size, quality, references, apiKey: credentials.apiKey, baseUrl: normalizeBaseUrl(credentials.baseUrl), model: credentials.model.trim() || DEFAULT_GPT_IMAGE_MODEL, signal: request.signal })
     if (!response) return { ok: false, error: '官方生图需要先登录 Profer 团队账号。' }
     const parsed = await parseResponse(response)
     if (parsed.error || !parsed.data) return { ok: false, error: parsed.error ?? '图片服务未返回有效图片，本次不会扣积分。' }
     const first = parsed.data.data![0]!
-    const image = await resolveImage(first, official ? undefined : credentials.apiKey, request.signal)
+    // xAI 返回的图片 URL 是临时公开 URL，不向它转发用户 API Key；OpenAI-compatible
+    // 服务仍保留原有的 Bearer 下载行为，因为部分代理会要求下载鉴权。
+    const imageDownloadKey = !official && credentials.provider === 'openai' ? credentials.apiKey : undefined
+    const image = await resolveImage(first, imageDownloadKey, request.signal)
     if (!image) return { ok: false, error: '图片生成结果无法读取，本次不会报告为成功。' }
     return { ok: true, ...image, revisedPrompt: first.revised_prompt, mode: official ? 'official' : 'byok' }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error('[GPT Image] provider request failed:', error)
+    console.error('[AI 图片生成] provider 请求失败:', error)
     return { ok: false, error: `图片生成失败：${message}` }
   }
 }

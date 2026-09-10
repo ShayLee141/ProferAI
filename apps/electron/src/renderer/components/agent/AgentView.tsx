@@ -38,7 +38,8 @@ import { ModelSelector } from '@/components/chat/ModelSelector'
 import { AttachmentPreviewItem } from '@/components/chat/AttachmentPreviewItem'
 import { QuotedSelectionChip } from '@/components/diff/QuotedSelectionChip'
 import { RichTextInput, type RichTextInputHandle } from '@/components/ai-elements/rich-text-input'
-import { SpeechButton } from '@/components/ai-elements/speech-button'
+import { SpeechButton, useLoadVoiceDictationSettings } from '@/components/ai-elements/speech-button'
+import { voiceDictationEnabledAtom } from '@/atoms/voice-dictation-atoms'
 import { InputToolbarOverflow, type ToolbarItem } from '@/components/ai-elements/InputToolbarOverflow'
 import {
   AgentComposerToolMenuItem,
@@ -131,7 +132,7 @@ const AGENT_REFRESH_HEADROOM = 100
 /** 内存缓存只保留尾部窗口，防止随用户加载更多历史无限膨胀 */
 const AGENT_CACHE_WINDOW = DESKTOP_AGENT_PAGE_SIZE + AGENT_REFRESH_HEADROOM
 
-import { MAX_ATTACHMENT_SIZE, resolveEffectivePermissionMode } from '@profer/shared'
+import { MAX_ATTACHMENT_SIZE, isAgentPresetToolGroupDisabled, resolveEffectivePermissionMode } from '@profer/shared'
 import { fileToBase64, formatFileNames, getFileBaseName, getFileParentPath } from '@/lib/file-utils'
 import { createClipboardPendingFile, createClipboardTextDraft, makeUniqueAttachmentName } from '@/lib/clipboard-text-attachment'
 import { AgentMessageQueue } from './AgentMessageQueue'
@@ -414,7 +415,7 @@ function AgentRuntimeSelector({
     <AgentComposerToolPopover
       open={open}
       onOpenChange={(nextOpen) => setOpen(disabled ? false : nextOpen)}
-      tooltip={disabled ? 'Agent 运行中，完成后可切换内核' : '切换当前会话下一轮使用的 Agent 内核'}
+      tooltip={disabled ? `Agent 运行中，完成后可切换内核（当前：${current.label}）` : `切换当前会话下一轮使用的 Agent 内核（当前：${current.label}）`}
       align="start"
       className="w-48"
       trigger={
@@ -422,10 +423,8 @@ function AgentRuntimeSelector({
           label={`Agent 内核：${current.label}`}
           tabletMode={tabletMode}
           disabled={disabled}
-          className="w-auto gap-1.5 px-2 text-xs font-medium"
         >
-          <Bot className="size-4" />
-          <span>{current.label}</span>
+          <Bot className="size-5" />
         </AgentComposerToolTrigger>
       }
     >
@@ -503,26 +502,13 @@ function ToolbarGraphButton({ onClick, tabletMode }: { onClick: () => void; tabl
   return (
     <AgentComposerToolTrigger
       label={`任务图${hasData ? ` · ${completed}/${total}` : ''}`}
-      tooltip={`任务图${hasData ? ` · ${completed}/${total}` : ''}`}
+      tooltip={`任务图${hasData ? ` · ${completed}/${total} · ${inProgress > 0 ? '进行中' : progress === 100 ? '完成' : ''}` : ''}`}
       state={hasData ? 'default' : 'muted'}
       tabletMode={tabletMode}
       onClick={onClick}
-      className={cn(
-        'active:scale-[0.97]',
-        hasData ? 'w-auto gap-1.5 px-2.5 text-xs' : 'w-auto',
-        !hasData && 'text-muted-foreground/40',
-      )}
+      className="active:scale-[0.97]"
     >
-      <GitBranch className="size-[14px] shrink-0" />
-      {hasData && (
-        <>
-          <span className="font-medium text-foreground/70 tabular-nums">{completed}/{total}</span>
-          <div className="h-1 w-8 overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-emerald-400 transition-all duration-500" style={{ width: `${progress}%` }} />
-          </div>
-          <span className="text-muted-foreground/50">{inProgress > 0 ? '进行中' : progress === 100 ? '完成' : ''}</span>
-        </>
-      )}
+      <GitBranch className="size-5 shrink-0" />
     </AgentComposerToolTrigger>
   )
 }
@@ -2960,6 +2946,12 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   const hasTextInput = inputContent.trim().length > 0
   const isCompacting = contextStatus.isCompacting
   const canSend = messagesLoaded && !presetSelectionRequired && (hasTextInput || pendingFiles.length > 0 || !!suggestion) && agentChannelId !== null && hasAvailableModel && (!streaming || hasTextInput) && !isCompacting && !streamState?.stopping
+  const voiceDictationEnabled = useAtomValue(voiceDictationEnabledAtom)
+  useLoadVoiceDictationSettings()
+
+  const taskGraphEnabled = Boolean(
+    sessionBoundPreset && !isAgentPresetToolGroupDisabled(sessionBoundPreset.disabledToolGroups, 'task-graph'),
+  )
 
   const inputToolbarItems = React.useMemo<ToolbarItem[]>(() => {
     const items: ToolbarItem[] = [
@@ -2972,6 +2964,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
           strictProtocolFilter
           externalSelectedModel={externalSelectedModel}
           onModelSelect={handleModelSelect}
+          composerTool
         />
       ),
     },
@@ -3024,7 +3017,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
         />
       ),
     },
-    { key: 'speech', node: <SpeechButton composerTool tabletMode={tabletMode} /> },
+    ...(voiceDictationEnabled ? [{ key: 'speech', node: <SpeechButton composerTool tabletMode={tabletMode} /> }] : []),
     {
       key: 'attach',
       node: (
@@ -3056,10 +3049,10 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
         />
       ),
     },
-    {
+    ...(taskGraphEnabled ? [{
       key: 'graph',
       node: <ToolbarGraphButton tabletMode={tabletMode} onClick={() => { setGraphDialogOpen(true); setGraphRefreshVersion(v => v + 1) }} />,
-    },
+    }] : []),
   ]
     return tabletMode
       ? items.filter((item) => !TABLET_HIDDEN_TOOLBAR_KEYS.has(item.key))
@@ -3094,6 +3087,8 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     workspaceSlug,
     openWorkspacePresets,
     sessionBoundPreset,
+    taskGraphEnabled,
+    voiceDictationEnabled,
   ])
 
   const inputTrailingNode = (streaming || streamState?.stopping) ? (

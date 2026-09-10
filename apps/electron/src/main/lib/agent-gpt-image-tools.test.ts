@@ -12,7 +12,7 @@ mock.module('electron', () => ({
 
 mock.module('./chat-tool-config', () => ({
   getToolState: () => ({ enabled: true }), getToolCredentials: () => ({}),
-  getGptImageCredentials: () => ({ mode: 'official', apiKey: '', baseUrl: '', model: '' }),
+  getGptImageCredentials: () => ({ provider: 'openai', mode: 'official', apiKey: '', baseUrl: '', model: '' }),
 }))
 mock.module('./auth-service', () => ({
   getTeamAuth: () => ({ token: 'test' }), getTeamAuthWithRefresh: async () => undefined,

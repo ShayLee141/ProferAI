@@ -32,15 +32,8 @@ interface SpeechButtonProps {
   tabletMode?: boolean
 }
 
-export function SpeechButton({
-  disabled = false,
-  className,
-  composerTool = false,
-  tabletMode = false,
-}: SpeechButtonProps): React.ReactElement | null {
-  const enabled = useAtomValue(voiceDictationEnabledAtom)
+export function useLoadVoiceDictationSettings(): void {
   const setSettings = useSetAtom(voiceDictationSettingsAtom)
-
   useEffect(() => {
     let cancelled = false
     window.electronAPI.getVoiceDictationSettings()
@@ -53,6 +46,17 @@ export function SpeechButton({
       cancelled = true
     }
   }, [setSettings])
+}
+
+export function SpeechButton({
+  disabled = false,
+  className,
+  composerTool = false,
+  tabletMode = false,
+}: SpeechButtonProps): React.ReactElement | null {
+  const enabled = useAtomValue(voiceDictationEnabledAtom)
+
+  useLoadVoiceDictationSettings()
 
   const handleClick = useCallback((): void => {
     void (async () => {

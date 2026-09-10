@@ -9,7 +9,7 @@ mock.module('electron', () => ({
   },
 }))
 
-let credentials = { mode: 'official' as 'official' | 'byok', apiKey: '', baseUrl: '', model: '' }
+let credentials = { provider: 'openai' as 'openai' | 'xai', mode: 'official' as 'official' | 'byok', apiKey: '', baseUrl: '', model: '' }
 let auth: { baseUrl: string; token: string } | null = {
   baseUrl: 'https://team.example/',
   token: 'team-token',
@@ -33,7 +33,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
-  credentials = { mode: 'official', apiKey: '', baseUrl: '', model: '' }
+  credentials = { provider: 'openai', mode: 'official', apiKey: '', baseUrl: '', model: '' }
   auth = { baseUrl: 'https://team.example/', token: 'team-token' }
   legacyCredentials = {}
 })
@@ -76,8 +76,9 @@ describe('GPT Image 连接测试', () => {
     })
   })
 
-  test('自带 Key 模式仍使用 OpenAI-compatible models 接口', async () => {
+  test('自带 Key 模式仍使用 OpenAI Images models 接口', async () => {
     credentials = {
+      provider: 'openai',
       mode: 'byok',
       apiKey: 'sk-test',
       baseUrl: 'https://byok.example/',
@@ -91,10 +92,32 @@ describe('GPT Image 连接测试', () => {
 
     await expect(testGptImageConnection()).resolves.toEqual({
       success: true,
-      message: '连接成功，OpenAI-compatible API 可用',
+      message: '连接成功，OpenAI Images API 可用',
     })
     expect(calls[0]!.url).toBe('https://byok.example/v1/models')
     expect(calls[0]!.headers.get('authorization')).toBe('Bearer sk-test')
+  })
+
+  test('xAI Grok 模式会去掉用户填写地址末尾的 /v1', async () => {
+    credentials = {
+      provider: 'xai',
+      mode: 'byok',
+      apiKey: 'xai-test',
+      baseUrl: 'https://api.x.ai/v1/',
+      model: 'grok-imagine-image-2.0',
+    }
+    const calls: Request[] = []
+    globalThis.fetch = (async (input, init) => {
+      calls.push(new Request(input, init))
+      return jsonResponse({ data: [] })
+    }) as typeof fetch
+
+    await expect(testGptImageConnection()).resolves.toEqual({
+      success: true,
+      message: '连接成功，xAI Grok Images API 可用',
+    })
+    expect(calls[0]!.url).toBe('https://api.x.ai/v1/models')
+    expect(calls[0]!.headers.get('authorization')).toBe('Bearer xai-test')
   })
 
   test('旧版 nano-banana 测试仍要求 OpenAI API Key', async () => {
