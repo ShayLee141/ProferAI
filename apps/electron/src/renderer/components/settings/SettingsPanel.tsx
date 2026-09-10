@@ -59,8 +59,6 @@ import { DataManagementSettings } from "./DataManagementSettings";
 import { TeamWorkspaceSettings } from "./TeamWorkspaceSettings";
 import { CreditsSettings } from "./CreditsSettings";
 import { SubscriptionSettings } from "./SubscriptionSettings";
-import { TabletConnectionSettings } from "./TabletConnectionSettings";
-import { TabletNotificationSettings } from "./TabletNotificationSettings";
 import { OpenApiSettings } from "./OpenApiSettings";
 import { ProxySettings } from "./ProxySettings";
 
@@ -121,7 +119,7 @@ const AUTH_REQUIRED_TABS: ReadonlySet<SettingsTab> = new Set([
 ]);
 
 /** 根据标签页 id 渲染对应内容 */
-function renderTabContent(tab: SettingsTab, tabletMode = false): React.ReactElement {
+function renderTabContent(tab: SettingsTab): React.ReactElement {
   switch (tab) {
     case "general":
       return <GeneralSettings />;
@@ -136,12 +134,7 @@ function renderTabContent(tab: SettingsTab, tabletMode = false): React.ReactElem
     case "tools":
       return <ToolSettings />;
     case "appearance":
-      // 平板（tabsOverride 非空）：界面大小裁剪到 150%、隐藏 Agent 预览展开方式（功能不可用）
-      return <AppearanceSettings tabletMode={tabletMode} />;
-    case "connection":
-      return <TabletConnectionSettings />;
-    case "notifications":
-      return <TabletNotificationSettings />;
+      return <AppearanceSettings />;
     case "about":
       return <AboutSettings />;
     case "bots":
@@ -355,7 +348,7 @@ export function SettingsPanel({
         <ScrollArea className="flex-1 min-h-0">
           <div className="settings-content px-6 py-5">
             <div className="mx-auto w-full max-w-3xl">
-              {renderTabContent(effectiveTab, Boolean(tabsOverride))}
+              {renderTabContent(effectiveTab)}
             </div>
           </div>
         </ScrollArea>

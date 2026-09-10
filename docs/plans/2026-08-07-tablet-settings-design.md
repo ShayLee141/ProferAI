@@ -1,6 +1,11 @@
 # 平板版设置页面设计（2026-08-07）
 
-状态：✅ 已实施（2026-08-07，构建 + typecheck 通过）
+> ⚠️ 历史文档（已废弃）：本文描述的平板设置入口（`apps/electron/src/renderer/tablet/main.tsx`、
+> `TabletConnectionSettings` / `TabletNotificationSettings`、`body.tablet-mode` 竖屏 CSS）已于
+> 2026-09-11 随 tablet 线退役移除，仅作历史记录保留（完整旧代码见分支
+> `archive/tablet-line-pre-reset-20260911`）。当前远程服务说明见 `docs/profer-remote-service.md`。
+
+状态：🗄️ 已废弃（曾于 2026-08-07 实施，2026-09-11 tablet 退役时移除）
 范围：`tablet-app` 设置页（UI 实现在桌面 renderer 的 `tablet` 入口，见 `apps/electron/src/renderer/tablet/main.tsx`）
 
 ## 1. 背景与现状
