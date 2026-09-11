@@ -1,4 +1,4 @@
-import { isDeepSeekV4Model, type ProviderType } from '@profer/shared'
+import { supports1MContext, type ProviderType } from '@profer/shared'
 
 export const DEEPSEEK_SUBAGENT_MODEL_ID = 'deepseek-v4-flash'
 export interface AgentModelRoutingInput {
@@ -30,10 +30,11 @@ export function resolveAgentModelRouting(input: AgentModelRoutingInput): AgentMo
 
   return {
     deepSeekFamily,
-    // DeepSeek V4 Pro / Flash 已确认支持 1M context；Claude SDK 需要 `[1m]`
-    // 模型后缀与 `context-1m-2025-08-07` beta 才会按 1M 协商。
-    // 其它 DeepSeek 模型仍维持其原有上下文能力，不误开 1M。
-    enable1MContext: !deepSeekFamily || isDeepSeekV4Model(input.modelId),
+    // 1M 上下文按「代际默认」判定：DeepSeek V4 这一代及之后的模型家族（含后续新版本）
+    // 默认可用；Claude SDK 需要 `[1m]` 模型后缀与 `context-1m-2025-08-07` beta 才会按 1M 协商。
+    // 非 DeepSeek 模型沿用原有策略直接放行，实际是否追加后缀由 resolveAgentSdkModelId 的
+    // provider 白名单决定。
+    enable1MContext: !deepSeekFamily || supports1MContext(input.modelId ?? ''),
     ...(deepSeekFamily && { subagentModel: DEEPSEEK_SUBAGENT_MODEL_ID }),
   }
 }

@@ -7,8 +7,11 @@
 
 import {
   ONE_MILLION_CONTEXT_WINDOW,
+  CODEX_GPT_54_MINI_CONTEXT_WINDOW,
   extractZhipuCodingTeamApiToken,
   isDeepSeekV4Model,
+  resolveDeepSeekV4ModelId,
+  supportsVerified1MContext,
   type CodexOAuthCredentials,
   type ProviderType,
   type XaiOAuthCredentials,
@@ -54,7 +57,7 @@ const VOLCENGINE_GLM_MAX_TOKENS = 128_000
 const GLM_53_MAX_TOKENS = 131_072
 const CODEX_BASE_URL = 'https://chatgpt.com/backend-api'
 const CODEX_MAX_TOKENS = 128_000
-const CODEX_54_MINI_CONTEXT_WINDOW = 400_000
+const CODEX_54_MINI_CONTEXT_WINDOW = CODEX_GPT_54_MINI_CONTEXT_WINDOW
 const CODEX_56_CONTEXT_WINDOW = 1_050_000
 const CODEX_THINKING_LEVEL_MAP = { xhigh: 'xhigh', minimal: 'low' } as const
 const OFFICIAL_GPT_56_MODEL_IDS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
@@ -275,10 +278,13 @@ async function getCatalogModels(provider: KnownProvider): Promise<readonly PiCat
 }
 
 async function findPiCatalogModel(provider: ProviderType, modelId: string): Promise<PiCatalogModel | undefined> {
+  // DeepSeek 官方短名（deepseek-flash / deepseek-pro）在 catalog 里以 deepseek-v4-* 登记：
+  // 只借它的元数据（窗口/成本/最大输出/思考档位），注册与请求仍用用户填的原始 ID。
+  const catalogModelId = resolveDeepSeekV4ModelId(modelId) ?? modelId
   const checked = new Set<string>()
   for (const candidate of candidatePiProviders(provider)) {
     checked.add(candidate)
-    const model = findCatalogModelById(await getCatalogModels(candidate), modelId)
+    const model = findCatalogModelById(await getCatalogModels(candidate), catalogModelId)
     if (model) return model
   }
 
@@ -286,7 +292,7 @@ async function findPiCatalogModel(provider: ProviderType, modelId: string): Prom
   const { getProviders } = await loadPiAiCompat()
   for (const candidate of getProviders()) {
     if (checked.has(candidate)) continue
-    const model = findCatalogModelById(await getCatalogModels(candidate), modelId)
+    const model = findCatalogModelById(await getCatalogModels(candidate), catalogModelId)
     if (model) return model
   }
   return undefined
@@ -334,23 +340,31 @@ async function resolvePiModelDefaults(input: PiAgentQueryOptions, explicit1MCont
     && input.channelId != null
     && isOfficialManagedChannel({ id: input.channelId })
     && modelId === GPT_6_ASTRA_MODEL_ID
-  const isDeepSeekV4 = isDeepSeekV4Model(input.model)
   const isGlm53 = modelId === 'glm-5.3'
   const isVolcengineGlm5x = (input.provider === 'doubao' || input.provider === 'ark-coding-plan') && (modelId === 'glm-5.2' || modelId === 'glm-5.3')
-  const explicitCompatibleContextWindow = input.provider !== 'deepseek' && explicit1MContext && isDeepSeekV4 ? ONE_MILLION_CONTEXT_WINDOW : undefined
-  const catalogContextWindow = input.provider !== 'deepseek' && isDeepSeekV4 ? undefined : catalogModel?.contextWindow
-  const deepSeekCatalogMissContextWindow = !catalogModel && input.provider === 'deepseek' && isDeepSeekV4 ? ONE_MILLION_CONTEXT_WINDOW : undefined
+  // 1M 按「代际默认」判定，但同样要求 provider 已验证（如 deepseek / zhipu-coding / xiaomi…）：
+  // custom、anthropic-compatible 与自建网关仍保留 catalog 的保守窗口，除非用户显式带 `[1m]`。
+  const isVerifiedOneMillionContext = explicit1MContext || supportsVerified1MContext(input.model, input.provider)
+  // DeepSeek 世代模型经第三方网关时，全局 catalog 会带上 1M 窗口，但不能据此假定该网关已协商 1M：
+  // 保留历史行为——退回保守默认窗口，只有用户显式写 `[1m]` 才认这份能力声明。
+  const isRelayedDeepSeekGeneration = input.provider !== 'deepseek'
+    && !explicit1MContext
+    && supportsVerified1MContext(input.model, 'deepseek')
+  const catalogContextWindow = isRelayedDeepSeekGeneration
+    ? DEFAULT_CONTEXT_WINDOW
+    : (catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW)
+  const contextWindow = isOfficialGpt56 || isOfficialGpt6Astra
+    ? CODEX_56_CONTEXT_WINDOW
+    : isVerifiedOneMillionContext
+      ? Math.max(catalogContextWindow, ONE_MILLION_CONTEXT_WINDOW)
+      : catalogContextWindow
   return {
     reasoning: catalogModel?.reasoning ?? true,
     thinkingLevelMap: providerSpecificCapabilities?.thinkingLevelMap ?? catalogModel?.thinkingLevelMap,
     compat: providerSpecificCapabilities?.compat,
     input: catalogModel ? [...catalogModel.input] : ['text', 'image'],
     cost: catalogModel ? { ...catalogModel.cost } : { ...ZERO_MODEL_COST },
-    contextWindow: isOfficialGpt56 || isOfficialGpt6Astra
-      ? CODEX_56_CONTEXT_WINDOW
-      : isGlm53
-        ? Math.max(catalogContextWindow ?? DEFAULT_CONTEXT_WINDOW, ONE_MILLION_CONTEXT_WINDOW)
-      : (explicitCompatibleContextWindow ?? catalogContextWindow ?? deepSeekCatalogMissContextWindow ?? DEFAULT_CONTEXT_WINDOW),
+    contextWindow,
     maxTokens: isVolcengineGlm5x ? VOLCENGINE_GLM_MAX_TOKENS : (catalogModel?.maxTokens ?? (isGlm53 ? GLM_53_MAX_TOKENS : DEFAULT_MAX_TOKENS)),
   }
 }

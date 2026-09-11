@@ -35,6 +35,9 @@ export * from './lark'
 // 推理 profile 相关类型
 export * from './reasoning-profile'
 
+// DeepSeek 官方短名 ↔ 正式 ID 别名
+export * from './deepseek-model-alias'
+
 // Agent Provider 适配器接口
 export * from './agent-provider'
 

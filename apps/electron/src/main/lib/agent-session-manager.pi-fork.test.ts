@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
 import { appendPiHarnessEvent, loadPiHarnessSnapshot } from './pi-harness/pi-harness-store'
 import { PI_HARNESS_EVENT_VERSION, type PiHarnessEvent } from './pi-harness/types'
+import { createPiFileCheckpoint, loadPiFileCheckpoint, restorePiFileCheckpoint } from './pi-file-checkpoint'
+import { getPiCheckpointsDir } from './config-paths'
 
 type AgentSessionManager = typeof import('./agent-session-manager')
 
@@ -68,6 +70,7 @@ function writeAgentSessionsIndex(sessions: Array<{
   sdkSessionId?: string
   piSessionFile?: string
   piEntryBindings?: Record<string, string>
+  piFileCheckpoints?: Record<string, string>
 }>): void {
   const dir = join(tempHome, 'config')
   mkdirSync(dir, { recursive: true })
@@ -180,6 +183,55 @@ describe('Pi 会话分叉', () => {
       piEntryBindings: { 'assistant-1': 'entry-keep' },
       forkSourceDir: join(tempHome, 'config', 'agent-workspaces', 'workspace-a', 'pi-source-session'),
     })
+  })
+
+  test('Given 源会话有文件检查点 When 分叉 Then 基线迁到分叉会话自己的目录且源会话删除后仍可回退', async () => {
+    writeAgentWorkspacesIndex([
+      { id: 'workspace-a', name: '工作区 A', slug: 'workspace-a', createdAt: 1, updatedAt: 1 },
+    ])
+    const sourceSessionId = 'pi-source-checkpoint'
+    const sourceDir = join(tempHome, 'config', 'agent-workspaces', 'workspace-a', sourceSessionId)
+    mkdirSync(sourceDir, { recursive: true })
+    writeFileSync(join(sourceDir, 'file.txt'), '分叉点之前的基线')
+    const checkpointRoot = getPiCheckpointsDir()
+    const checkpoint = createPiFileCheckpoint(sourceSessionId, sourceDir, checkpointRoot)
+    writeFileSync(join(sourceDir, 'file.txt'), '分叉点之后被改掉')
+
+    writeAgentSessionsIndex([{
+      id: sourceSessionId,
+      title: 'Pi 带检查点源会话',
+      workspaceId: 'workspace-a',
+      createdAt: 1,
+      updatedAt: 1,
+      agentRuntime: 'pi',
+      sdkSessionId: 'pi-session-id',
+      piSessionFile: join(tempHome, 'pi-checkpoint-session.jsonl'),
+      piEntryBindings: { 'assistant-1': 'entry-keep', 'assistant-2': 'entry-removed' },
+      piFileCheckpoints: { 'entry-keep': checkpoint.path },
+    }])
+    writeFileSync(join(tempHome, 'pi-checkpoint-session.jsonl'), '', 'utf-8')
+
+    const forked = await manager.forkAgentSession({ sessionId: sourceSessionId, upToMessageUuid: 'assistant-1' })
+
+    // 基线被迁到分叉会话自己的目录，而不是跨会话引用源会话（否则源会话回收/删除会打掉分叉的回退点）
+    const inheritedPath = forked.piFileCheckpoints?.['entry-keep']
+    expect(inheritedPath).toBeTruthy()
+    expect(inheritedPath!.startsWith(join(checkpointRoot, forked.id))).toBe(true)
+    expect(existsSync(inheritedPath!)).toBe(true)
+    // 分叉分支里不存在的 turn 不能把映射带过来
+    expect(forked.piFileCheckpoints?.['entry-removed']).toBeUndefined()
+
+    // 源会话连同它的检查点目录一起被删掉，分叉会话仍能独立回退到分叉点之前的状态
+    // （分叉会话的工作区是源工作区的副本，回退目标用独立目录模拟，避免被源会话删除带走）
+    const forkCwd = join(tempHome, 'fork-workspace')
+    mkdirSync(forkCwd, { recursive: true })
+    writeFileSync(join(forkCwd, 'file.txt'), '分叉会话里又被改了一轮')
+    manager.deleteAgentSession(sourceSessionId)
+    expect(existsSync(join(checkpointRoot, sourceSessionId))).toBe(false)
+    expect(existsSync(sourceDir)).toBe(false)
+
+    restorePiFileCheckpoint(loadPiFileCheckpoint(inheritedPath!), forkCwd)
+    expect(readFileSync(join(forkCwd, 'file.txt'), 'utf-8')).toBe('分叉点之前的基线')
   })
 
   test('Given Pi 会话缺 piEntryBindings When 分叉 Then 拒绝并提示先继续一次对话', async () => {

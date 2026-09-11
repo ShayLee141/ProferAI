@@ -2929,6 +2929,10 @@
 }
 
 @container (max-width: 720px) {
+  .agent-conversation .sticky-user-banner {
+    margin-left: 6px;
+  }
+
   .agent-conversation .message-item .message-content,
   .agent-conversation .message-item .file-changes-summary,
   .agent-conversation .message-item .agent-turn-actions,

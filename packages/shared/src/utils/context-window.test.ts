@@ -3,12 +3,15 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   ONE_MILLION_CONTEXT_WINDOW,
   CODEX_GPT_CONTEXT_WINDOW,
+  CODEX_GPT_54_MINI_CONTEXT_WINDOW,
   inferContextWindow,
   isDeepSeekV4Model,
+  isNextGeneration1MContextModel,
   normalizeContextModelId,
   resolveAgentSdkModelId,
   resolveContextWindowFromModelUsage,
   supports1MContext,
+  supportsVerified1MContext,
 } from './context-window'
 
 describe('DeepSeek V4 1M 上下文能力', () => {
@@ -24,13 +27,22 @@ describe('DeepSeek V4 1M 上下文能力', () => {
     expect(isDeepSeekV4Model('gateway/deepseek-v4-flash')).toBe(true)
   })
 
-  test('Given 非精确 V4 Pro/Flash 的 DeepSeek 模型 When 推断 Then 保持默认 200K', () => {
+  test('Given 非精确 V4 Pro/Flash 的 DeepSeek 模型 When 识别推理 SKU Then 仍按精确匹配', () => {
     expect(isDeepSeekV4Model('deepseek-v4')).toBe(false)
     expect(isDeepSeekV4Model('deepseek-v4-unknown')).toBe(false)
     expect(isDeepSeekV4Model('deepseek-v4-pro-max')).toBe(false)
     expect(isDeepSeekV4Model('deepseek-v4-flash:free')).toBe(false)
     expect(isDeepSeekV4Model('my-deepseek-v4-pro')).toBe(false)
     expect(inferContextWindow('deepseek-reasoner')).toBe(DEFAULT_CONTEXT_WINDOW)
+  })
+
+  test('Given DeepSeek 官方短名 When 识别推理 SKU Then 与同代正式 ID 同等处理', () => {
+    // 思考协议（output_config.effort）只看这个判定，短名漏了会导致同一模型拿不到 effort 映射
+    expect(isDeepSeekV4Model('deepseek-flash')).toBe(true)
+    expect(isDeepSeekV4Model('deepseek-pro')).toBe(true)
+    expect(isDeepSeekV4Model('Gateway/DeepSeek-Flash[1m]')).toBe(true)
+    expect(isDeepSeekV4Model('deepseek-chat')).toBe(false)
+    expect(isDeepSeekV4Model('deepseek-turbo')).toBe(false)
   })
 
   test('Given GLM-5.3 or an explicit 1M GLM variant When normalizing Then preserves its 1M capability', () => {
@@ -46,6 +58,75 @@ describe('DeepSeek V4 1M 上下文能力', () => {
   test('Given GPT-6 Astra When renderer requires a fallback Then use the verified 1.05M window', () => {
     expect(supports1MContext('gpt-6-astra')).toBe(true)
     expect(inferContextWindow('gpt-6-astra')).toBe(CODEX_GPT_CONTEXT_WINDOW)
+  })
+})
+
+describe('代际默认 1M 规则（DeepSeek 一代及之后）', () => {
+  test('Given DeepSeek 一代及之后的家族新版本 When 识别 Then 自动继承 1M', () => {
+    expect(isNextGeneration1MContextModel('deepseek-v5')).toBe(true)
+    expect(isNextGeneration1MContextModel('kimi-k3')).toBe(true)
+    expect(isNextGeneration1MContextModel('kimi-k4-thinking')).toBe(true)
+    expect(isNextGeneration1MContextModel('glm-5.4')).toBe(true)
+    expect(isNextGeneration1MContextModel('glm-6')).toBe(true)
+    expect(isNextGeneration1MContextModel('mimo-v3')).toBe(true)
+    expect(isNextGeneration1MContextModel('minimax-m4')).toBe(true)
+    expect(isNextGeneration1MContextModel('grok-4.6')).toBe(true)
+    expect(isNextGeneration1MContextModel('grok-5')).toBe(true)
+  })
+
+  test('Given DeepSeek 官方无版本号短名 When 识别 Then 按同代 1M 处理（含同代新变体）', () => {
+    // 渠道里手填的模型 ID 就是短名（deepseek-flash / deepseek-pro），不能因少了版本号就落回 200K
+    expect(isNextGeneration1MContextModel('deepseek-flash')).toBe(true)
+    expect(isNextGeneration1MContextModel('deepseek-pro')).toBe(true)
+    expect(isNextGeneration1MContextModel('deepseek-flash-latest')).toBe(true)
+    expect(inferContextWindow('deepseek-flash')).toBe(ONE_MILLION_CONTEXT_WINDOW)
+    expect(inferContextWindow('deepseek-pro')).toBe(ONE_MILLION_CONTEXT_WINDOW)
+    expect(supportsVerified1MContext('deepseek-flash', 'deepseek')).toBe(true)
+    expect(supportsVerified1MContext('deepseek-pro', 'deepseek')).toBe(true)
+    expect(resolveAgentSdkModelId('deepseek-flash', 'deepseek')).toBe('deepseek-flash[1m]')
+    // 经未验证网关仍保守，只有显式 `[1m]` 才认
+    expect(supportsVerified1MContext('deepseek-flash', 'custom')).toBe(false)
+    expect(resolveAgentSdkModelId('deepseek-flash', 'custom')).toBe('deepseek-flash')
+  })
+
+  test('Given DeepSeek 旧世代模型 When 识别 Then 短名规则不误升', () => {
+    // deepseek-chat / deepseek-reasoner / deepseek-v3.x 属于短名前代，不应被 1M 规则收编
+    expect(isNextGeneration1MContextModel('deepseek-chat')).toBe(false)
+    expect(isNextGeneration1MContextModel('deepseek-reasoner')).toBe(false)
+    expect(inferContextWindow('deepseek-chat')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('deepseek-reasoner')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(supportsVerified1MContext('deepseek-chat', 'deepseek')).toBe(false)
+  })
+
+  test('Given 低于代际基线的旧 SKU When 识别 Then 保持默认 200K', () => {
+    expect(inferContextWindow('kimi-k2.6')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('kimi-for-coding')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('glm-5.1')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('MiniMax-M2.7')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('mimo-v2-flash')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('mimo-v2-omni')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('deepseek-v3.2')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(inferContextWindow('claude-opus-4-5')).toBe(DEFAULT_CONTEXT_WINDOW)
+  })
+
+  test('Given 已确认但版本号低于阈值的 SKU When 识别 Then 仍按 1M', () => {
+    expect(inferContextWindow('mimo-v2-pro')).toBe(ONE_MILLION_CONTEXT_WINDOW)
+    expect(inferContextWindow('claude-opus-4-6')).toBe(ONE_MILLION_CONTEXT_WINDOW)
+  })
+
+  test('Given GPT-5.4 mini When 推断 Then 使用已验证的 400K 而不是 1M', () => {
+    expect(supports1MContext('gpt-5.4-mini')).toBe(false)
+    expect(inferContextWindow('gpt-5.4-mini')).toBe(CODEX_GPT_54_MINI_CONTEXT_WINDOW)
+  })
+
+  test('Given provider + 模型 When 判定已验证 1M Then 只认可已验证的组合', () => {
+    expect(supportsVerified1MContext('deepseek-v4-pro', 'deepseek')).toBe(true)
+    expect(supportsVerified1MContext('glm-5.4', 'zhipu-coding')).toBe(true)
+    expect(supportsVerified1MContext('kimi-k4', 'kimi-api')).toBe(true)
+    expect(supportsVerified1MContext('k3', 'kimi-coding')).toBe(true)
+    expect(supportsVerified1MContext('deepseek-v4-pro', 'custom')).toBe(false)
+    expect(supportsVerified1MContext('glm-5.3', 'anthropic-compatible')).toBe(false)
+    expect(supportsVerified1MContext('kimi-k2.6', 'kimi-api')).toBe(false)
   })
 })
 
@@ -71,9 +152,22 @@ describe('Agent SDK 1M 模型转换', () => {
     expect(resolveAgentSdkModelId('glm-5.3', 'zhipu-coding')).toBe('glm-5.3[1m]')
   })
 
-  test('Given DeepSeek provider 的非精确 V4 名称 When 转换 Then 不误加 1M 后缀', () => {
-    expect(resolveAgentSdkModelId('deepseek-v4-pro-max', 'deepseek')).toBe('deepseek-v4-pro-max')
+  test('Given DeepSeek provider 的世代模型（含后续新版本）When 转换 Then 追加 1M 后缀', () => {
+    expect(resolveAgentSdkModelId('deepseek-v4-pro-max', 'deepseek')).toBe('deepseek-v4-pro-max[1m]')
+    expect(resolveAgentSdkModelId('deepseek-v5-turbo', 'deepseek')).toBe('deepseek-v5-turbo[1m]')
     expect(resolveAgentSdkModelId('gateway/deepseek-v4-flash', 'deepseek')).toBe('gateway/deepseek-v4-flash[1m]')
+  })
+
+  test('Given 低于基线的旧模型 When 转换 Then 不误加 1M 后缀', () => {
+    expect(resolveAgentSdkModelId('deepseek-reasoner', 'deepseek')).toBe('deepseek-reasoner')
+    expect(resolveAgentSdkModelId('kimi-k2.6', 'kimi-api')).toBe('kimi-k2.6')
+    expect(resolveAgentSdkModelId('glm-5.1', 'zhipu-coding')).toBe('glm-5.1')
+  })
+
+  test('Given 已验证家族的新版本 When 转换 Then 自动继承 1M 后缀', () => {
+    expect(resolveAgentSdkModelId('glm-5.4', 'zhipu-coding')).toBe('glm-5.4[1m]')
+    expect(resolveAgentSdkModelId('minimax-m4', 'minimax')).toBe('minimax-m4[1m]')
+    expect(resolveAgentSdkModelId('mimo-v2.5-pro', 'xiaomi')).toBe('mimo-v2.5-pro[1m]')
   })
 })
 

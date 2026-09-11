@@ -1,7 +1,7 @@
 /**
  * SettingsPanel - 设置面板
  *
- * 顶部 Header（标题 + 关闭按钮）+ 下方（左侧导航 + 右侧 ScrollArea 内容区域）。
+ * 左侧导航（标题 + 分组）+ 右侧内容区域。
  * 使用 Jotai atom 管理当前标签页状态。
  */
 
@@ -290,69 +290,68 @@ export function SettingsPanel({
   const activeTabLabel = tabs.find((t) => t.id === effectiveTab)?.label ?? "设置";
 
   return (
-    <div className="flex flex-col h-full">
-      {/* 顶部 Header 栏 */}
-      <div className="h-12 flex items-center justify-between px-5 border-b border-surface-border/50 flex-shrink-0">
-        <h2 className="text-sm font-medium text-foreground">
-          {activeTabLabel}
-        </h2>
-        {onClose && (
-          <button
-            onClick={handleClose}
-            className="rounded-md p-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-control transition-colors"
-          >
-            <X size={16} />
-          </button>
-        )}
-      </div>
-
-      {/* 下方主体：左导航 + 右内容（竖屏由 globals.css 改为纵向布局：顶部横条 tab + 内容） */}
-      <div className="settings-body flex flex-1 min-h-0">
-        {/* 左侧 Tab 导航 */}
-        <div className="settings-nav w-[184px] border-r border-surface-border/50 bg-surface-sunken/30 pt-3 pb-3 px-2.5 flex-shrink-0 overflow-y-auto scrollbar-thin">
-          <nav className="flex flex-col gap-0.5" aria-label="设置分类">
-            {groups.map((group) => (
-              <React.Fragment key={group.title ?? "__root__"}>
-                {group.title && (
-                  <div className="px-3 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50">
-                    {group.title}
-                  </div>
-                )}
-                {group.items.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => handleTabChange(tab.id)}
-                    className={cn(
-                      "group flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
-                      effectiveTab === tab.id
-                        ? "bg-surface-selected text-foreground font-medium shadow-sm"
-                        : "text-muted-foreground hover:bg-surface-selected/50 hover:text-foreground",
-                    )}
-                  >
-                    <span className={cn(
-                      "flex-shrink-0 transition-colors",
-                      effectiveTab === tab.id ? "text-primary" : "text-muted-foreground/70 group-hover:text-foreground"
-                    )}>{tab.icon}</span>
-                    <span className="truncate">{tab.label}</span>
-                    {tab.id === "about" && (hasUpdate || hasEnvironmentIssues) && (
-                      <span className="ml-auto w-2 h-2 rounded-full bg-red-500" />
-                    )}
-                  </button>
-                ))}
-              </React.Fragment>
-            ))}
-          </nav>
+    <div className="settings-body flex h-full min-h-0">
+      {/* 左侧固定导航：设置标题与分组入口同列，宽度 240px。 */}
+      <aside className="settings-nav flex w-[240px] flex-shrink-0 flex-col overflow-y-auto border-r border-surface-border/50 bg-surface-sunken/30 px-2.5 py-4 scrollbar-thin">
+        <div className="settings-nav-header flex items-center px-3 pb-4">
+          <h2 className="text-base font-semibold text-foreground">设置</h2>
         </div>
+        <nav className="flex flex-col gap-0.5" aria-label="设置分类">
+          {groups.map((group) => (
+            <React.Fragment key={group.title ?? "__root__"}>
+              {group.title && (
+                <div className="px-3 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50">
+                  {group.title}
+                </div>
+              )}
+              {group.items.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => handleTabChange(tab.id)}
+                  className={cn(
+                    "group flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+                    effectiveTab === tab.id
+                      ? "bg-surface-selected text-foreground font-medium shadow-sm"
+                      : "text-muted-foreground hover:bg-surface-selected/50 hover:text-foreground",
+                  )}
+                >
+                  <span className={cn(
+                    "flex-shrink-0 transition-colors",
+                    effectiveTab === tab.id ? "text-primary" : "text-muted-foreground/70 group-hover:text-foreground"
+                  )}>{tab.icon}</span>
+                  <span className="truncate">{tab.label}</span>
+                  {tab.id === "about" && (hasUpdate || hasEnvironmentIssues) && (
+                    <span className="ml-auto size-2 rounded-full bg-red-500" />
+                  )}
+                </button>
+              ))}
+            </React.Fragment>
+          ))}
+        </nav>
+      </aside>
 
-        {/* 右侧内容区域（竖屏 flex-col 布局下需要 min-h-0 保持滚动约束） */}
+      {/* 右侧内容：标题属于内容区，不再横跨整个设置面板形成顶部栏。 */}
+      <section className="settings-main flex min-w-0 flex-1 flex-col">
+        <div className="settings-main-header flex min-h-[72px] flex-shrink-0 items-center justify-between px-8 py-5">
+          <h2 className="text-xl font-semibold text-foreground">{activeTabLabel}</h2>
+          {onClose && (
+            <button
+              onClick={handleClose}
+              aria-label="关闭设置"
+              className="rounded-md p-1.5 text-muted-foreground/60 transition-colors hover:bg-control hover:text-foreground"
+            >
+              <X size={18} />
+            </button>
+          )}
+        </div>
         <ScrollArea className="flex-1 min-h-0">
-          <div className="settings-content px-6 py-5">
+          <div className="settings-content px-8 pb-8 pt-1">
             <div className="mx-auto w-full max-w-3xl">
               {renderTabContent(effectiveTab)}
             </div>
           </div>
         </ScrollArea>
-      </div>
+      </section>
 
       {/* 退出拦截弹窗（侧边栏导航 / X 关闭 / Cmd+W） */}
       <AlertDialog open={showNavDialog} onOpenChange={(open) => { if (!open) cancelPendingAction() }}>

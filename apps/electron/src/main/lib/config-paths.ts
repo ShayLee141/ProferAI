@@ -338,6 +338,32 @@ export function getPiHarnessEventsPath(id: string): string {
 }
 
 /**
+ * 获取 Pi 文件检查点根目录路径
+ *
+ * 每个 Pi turn 开始前都会对会话 cwd 保存一份基线，按 sessionId 分目录存放。
+ * 常规路径使用 shadow Git 的增量对象；不可用时才降级为全量复制。刻意放在配置目录下而不是会话工作目录内：
+ *
+ * - 会话 cwd 是用户可见的工作台，检查点不应污染其体积与文件列表
+ * - 会话 cwd 内可能有被其他进程独占锁定的文件（如浏览器 profile），不适合作为宿主目录
+ * - fork 复制会话工作目录时不会连带复制历史快照，避免磁盘占用翻倍
+ *
+ * 生命周期由会话删除与 prunePiFileCheckpoints 显式管理，不依赖会话目录被整体删除。
+ * 如果目录不存在则自动创建。
+ *
+ * @returns ~/.profer/agent-checkpoints/
+ */
+export function getPiCheckpointsDir(): string {
+  const dir = join(getConfigDir(), 'agent-checkpoints')
+
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建 Pi 检查点目录: ${dir}`)
+  }
+
+  return dir
+}
+
+/**
  * 获取 Agent 工作区索引文件路径
  *
  * @returns ~/.profer/agent-workspaces.json

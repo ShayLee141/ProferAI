@@ -15,7 +15,7 @@ import { getGitForWindowsInstallPath } from './windows-env'
  *
  * @returns Git 可执行路径，如果未找到返回 null
  */
-function findGitPath(): string | null {
+export function findGitPath(): string | null {
   try {
     const command = process.platform === 'win32' ? 'where git' : 'which git'
 
