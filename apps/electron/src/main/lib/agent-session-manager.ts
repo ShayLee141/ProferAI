@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unl
 import { createInterface } from 'node:readline'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { randomUUID } from 'node:crypto'
-import { join, resolve, dirname } from 'node:path'
+import { isAbsolute, join, relative, resolve, dirname } from 'node:path'
 import {
   getAgentSessionsIndexPath,
   getAgentSessionsDir,
@@ -20,6 +20,7 @@ import {
   getPiHarnessEventsPath,
   getAgentSessionWorkspacePath,
   getAgentWorkspacePath,
+  getPiCheckpointsDir,
   getSdkConfigDir,
 } from './config-paths'
 import { getAgentWorkspace } from './agent-workspace-manager'
@@ -29,7 +30,7 @@ import { listAgentPresets, normalizeSessionPresetId, presetReferenceForId } from
 import { copySettledPiHarnessEventsForFork } from './pi-harness/pi-harness-store'
 import { forkPiSessionArtifact } from './pi-session-fork'
 import { isEphemeralTransportError } from './error-patterns'
-import { loadPiFileCheckpoint, restorePiFileCheckpoint } from './pi-file-checkpoint'
+import { adoptPiFileCheckpoints, loadPiFileCheckpoint, restorePiFileCheckpoint, prunePiFileCheckpoints, removePiFileCheckpoints } from './pi-file-checkpoint'
 
 // 在模块加载时一次性设置 SDK 配置目录，避免在 forkSession 等异步调用中临时修改/恢复
 // process.env 导致的并发安全问题（异步操作的 await 间隙其他代码可能读到错误值）。
@@ -133,6 +134,9 @@ export interface AgentRuntimeMetaSnapshot {
   agentRuntime: AgentRuntime
   codexFastMode?: boolean
   sdkSessionId?: string
+  piSessionFile?: string
+  piEntryBindings?: Record<string, string>
+  piFileCheckpoints?: Record<string, string>
   forkSourceDir?: string
   forkSourceSdkSessionId?: string
   resumeAtMessageUuid?: string
@@ -143,6 +147,9 @@ export function snapshotAgentRuntimeMeta(meta: AgentSessionMeta): AgentRuntimeMe
     agentRuntime: normalizeAgentRuntime(meta.agentRuntime),
     codexFastMode: meta.codexFastMode,
     sdkSessionId: meta.sdkSessionId,
+    piSessionFile: meta.piSessionFile,
+    piEntryBindings: meta.piEntryBindings,
+    piFileCheckpoints: meta.piFileCheckpoints,
     forkSourceDir: meta.forkSourceDir,
     forkSourceSdkSessionId: meta.forkSourceSdkSessionId,
     resumeAtMessageUuid: meta.resumeAtMessageUuid,
@@ -164,6 +171,9 @@ export function restoreAgentRuntimeMeta(id: string, snapshot: AgentRuntimeMetaSn
     agentRuntime: snapshot.agentRuntime,
     codexFastMode: snapshot.codexFastMode,
     sdkSessionId: snapshot.sdkSessionId,
+    piSessionFile: snapshot.piSessionFile,
+    piEntryBindings: snapshot.piEntryBindings,
+    piFileCheckpoints: snapshot.piFileCheckpoints,
     forkSourceDir: snapshot.forkSourceDir,
     forkSourceSdkSessionId: snapshot.forkSourceSdkSessionId,
     resumeAtMessageUuid: snapshot.resumeAtMessageUuid,
@@ -339,6 +349,32 @@ export function countArchivedAgentSessions(): number {
 export function getAgentSessionMeta(id: string): AgentSessionMeta | undefined {
   const index = readIndex()
   return index.sessions.find((s) => s.id === id)
+}
+
+/**
+ * 收集其他会话仍在引用的 Pi 文件检查点路径。
+ *
+ * 正常分叉会迁移基线到自己的目录；这里仍保护旧版/迁移失败时遗留的跨会话引用，
+ * 防止源会话常规回收把分叉侧的回退点静默删掉。这些路径仍计入所在会话的体积/数量预算。
+ *
+ * @param excludeSessionId 正在做回收的会话；它自己的引用由调用方显式传入
+ */
+export function collectForeignCheckpointPaths(excludeSessionId: string): Set<string> {
+  const referenced = new Set<string>()
+  for (const session of readIndex().sessions) {
+    if (session.id === excludeSessionId) continue
+    for (const checkpointPath of Object.values(session.piFileCheckpoints ?? {})) referenced.add(checkpointPath)
+  }
+  return referenced
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const relativePath = relative(resolve(root), resolve(candidate))
+  return Boolean(relativePath)
+    && relativePath !== '..'
+    && !relativePath.startsWith('../')
+    && !relativePath.startsWith('..\\')
+    && !isAbsolute(relativePath)
 }
 
 /**
@@ -790,6 +826,7 @@ export function updateAgentSessionMeta(
     ? previousRuntime
     : normalizeAgentRuntime(updates.agentRuntime)
   const runtimeChanged = updates.agentRuntime !== undefined && nextRuntime !== previousRuntime
+  const stalePiCheckpoints = runtimeChanged ? Object.values(existing.piFileCheckpoints ?? {}) : []
   const updated: AgentSessionMeta = {
     ...existing,
     ...updates,
@@ -800,6 +837,7 @@ export function updateAgentSessionMeta(
           sdkSessionId: undefined,
           piSessionFile: undefined,
           piEntryBindings: undefined,
+          piFileCheckpoints: undefined,
           forkSourceSdkSessionId: undefined,
           forkSourceDir: undefined,
           resumeAtMessageUuid: undefined,
@@ -811,6 +849,15 @@ export function updateAgentSessionMeta(
 
   index.sessions[idx] = updated
   writeIndex(index)
+
+  if (stalePiCheckpoints.length > 0) {
+    try {
+      const keepPaths = collectForeignCheckpointPaths(id)
+      prunePiFileCheckpoints(getPiCheckpointsDir(), id, { keepPaths })
+    } catch (error) {
+      console.warn(`[Agent 会话] 切换运行时后回收 Pi 文件检查点失败 (${id}):`, error)
+    }
+  }
 
   console.log(`[Agent 会话] 已更新会话: ${updated.title} (${updated.id})`)
   return updated
@@ -829,6 +876,67 @@ export function deleteAgentSession(id: string): void {
   }
 
   const removed = index.sessions.splice(idx, 1)[0]!
+
+  // 历史版本的 fork 可能仍直接引用源会话的 checkpoint。先迁移这些精确引用，
+  // 迁移失败则摘除 mapping；索引落盘前绝不删除源 cwd，旧版 cwd 内 checkpoint 才有机会被搬走。
+  const sourceCheckpointRoot = join(getPiCheckpointsDir(), id)
+  const legacySourceCheckpointRoot = removed.workspaceId
+    ? getAgentWorkspace(removed.workspaceId)
+      ? join(getAgentSessionWorkspacePath(getAgentWorkspace(removed.workspaceId)!.slug, id), '.profer-pi-checkpoints')
+      : undefined
+    : undefined
+  const isSourceCheckpoint = (checkpointPath: string): boolean =>
+    Object.values(removed.piFileCheckpoints ?? {}).includes(checkpointPath)
+    || isPathWithin(sourceCheckpointRoot, checkpointPath)
+    || (legacySourceCheckpointRoot ? isPathWithin(legacySourceCheckpointRoot, checkpointPath) : false)
+
+  try {
+    const bySession = new Map<string, Array<{ entryId: string; checkpointPath: string }>>()
+    for (const session of index.sessions) {
+      for (const [entryId, checkpointPath] of Object.entries(session.piFileCheckpoints ?? {})) {
+        if (!isSourceCheckpoint(checkpointPath)) continue
+        const entries = bySession.get(session.id) ?? []
+        entries.push({ entryId, checkpointPath })
+        bySession.set(session.id, entries)
+      }
+    }
+    for (const [targetSessionId, entries] of bySession) {
+      const adopted = adoptPiFileCheckpoints({
+        rootDir: getPiCheckpointsDir(),
+        targetSessionId,
+        paths: entries.map((entry) => entry.checkpointPath),
+      })
+      const targetIndex = index.sessions.findIndex((session) => session.id === targetSessionId)
+      if (targetIndex < 0) continue
+      const target = index.sessions[targetIndex]!
+      const checkpoints = { ...(target.piFileCheckpoints ?? {}) }
+      for (const { entryId, checkpointPath } of entries) {
+        const migrated = adopted.adopted[checkpointPath]
+        if (migrated) checkpoints[entryId] = migrated
+        else delete checkpoints[entryId]
+      }
+      index.sessions[targetIndex] = {
+        ...target,
+        ...(Object.keys(checkpoints).length > 0 ? { piFileCheckpoints: checkpoints } : { piFileCheckpoints: undefined }),
+        updatedAt: Date.now(),
+      }
+    }
+  } catch (error) {
+    // 删除本身仍可继续，但绝不保留悬空映射：本次未能读取/迁移时摘掉所有已识别的源引用。
+    console.warn(`[Agent 会话] 迁移源会话 Pi 文件检查点失败，将清除旧引用 (${id}):`, error)
+    for (let sessionIndex = 0; sessionIndex < index.sessions.length; sessionIndex += 1) {
+      const session = index.sessions[sessionIndex]!
+      const checkpoints = Object.fromEntries(
+        Object.entries(session.piFileCheckpoints ?? {}).filter(([, checkpointPath]) => !isSourceCheckpoint(checkpointPath)),
+      )
+      if (Object.keys(checkpoints).length === Object.keys(session.piFileCheckpoints ?? {}).length) continue
+      index.sessions[sessionIndex] = {
+        ...session,
+        ...(Object.keys(checkpoints).length > 0 ? { piFileCheckpoints: checkpoints } : { piFileCheckpoints: undefined }),
+        updatedAt: Date.now(),
+      }
+    }
+  }
   writeIndex(index)
 
   // 删除消息与任务图文件。任务图和会话消息均属于该 Profer session，删除必须同步清理。
@@ -859,6 +967,13 @@ export function deleteAgentSession(id: string): void {
         console.warn(`[Agent 会话] 清理 session 工作目录失败 (${id}):`, error)
       }
     }
+  }
+
+  // 新版检查点位于配置目录，删除会话后必须显式清理；旧版 cwd 内快照已随工作区删除。
+  try {
+    removePiFileCheckpoints(getPiCheckpointsDir(), id)
+  } catch (error) {
+    console.warn(`[Agent 会话] 清理 Pi 文件检查点失败 (${id}):`, error)
   }
 
   console.log(`[Agent 会话] 已删除会话: ${removed.title} (${removed.id})`)
@@ -1199,16 +1314,26 @@ async function forkPiAgentSession(sourceMeta: AgentSessionMeta, input: ForkSessi
       Object.entries(sourceMeta.piEntryBindings ?? {})
         .filter(([, mappedEntryId]) => Boolean(forkedManager.getEntry(mappedEntryId))),
     )
+    // 检查点以 Pi entry id 为键（而 bindings 是 uuid → entry id），
+    // 只继承新 branch 中实际存在的 entry，再迁移到分叉会话自己的检查点目录。
+    const keptEntryIds = new Set(Object.values(branchBindings))
+    const inheritedCheckpoints = Object.fromEntries(
+      Object.entries(sourceMeta.piFileCheckpoints ?? {})
+        .filter(([entryId]) => keptEntryIds.has(entryId)),
+    )
+    const branchCheckpoints = adoptInheritedCheckpoints(sourceMeta.id, newMeta.id, inheritedCheckpoints)
 
     updateAgentSessionMeta(newMeta.id, {
       sdkSessionId: forkedManager.getSessionId(),
       piSessionFile,
       piEntryBindings: branchBindings,
+      ...(Object.keys(branchCheckpoints).length > 0 && { piFileCheckpoints: branchCheckpoints }),
       forkSourceDir: sourceDir,
     })
     newMeta.sdkSessionId = forkedManager.getSessionId()
     newMeta.piSessionFile = piSessionFile
     newMeta.piEntryBindings = branchBindings
+    if (Object.keys(branchCheckpoints).length > 0) newMeta.piFileCheckpoints = branchCheckpoints
 
     if (sourceDir && destDir) copyForkWorkspaceFiles(sourceDir, destDir)
     await copyForkStoredSDKMessages({
@@ -1230,6 +1355,38 @@ async function forkPiAgentSession(sourceMeta: AgentSessionMeta, input: ForkSessi
 interface PiForkPoint {
   entryId: string
   interruptedText?: string
+}
+
+/**
+ * 把分叉会话继承到的基线搬到它自己的检查点目录，并返回重写后的 entry → 路径映射。
+ *
+ * 直接跨会话引用源会话目录里的基线是危险的：源会话下一轮的常规回收（它只认自己的映射）
+ * 或删除源会话都会把分叉侧的回退点打掉。迁移后每个会话只引用自己的基线，
+ * 回收/删除语义完全局部化；个别条目迁移失败时暂存原引用，删除源会话时会再次迁移或明确摘除。
+ */
+function adoptInheritedCheckpoints(
+  sourceSessionId: string,
+  targetSessionId: string,
+  inherited: Record<string, string>,
+): Record<string, string> {
+  const paths = Object.values(inherited)
+  if (paths.length === 0) return {}
+  try {
+    const { adopted, failed } = adoptPiFileCheckpoints({
+      rootDir: getPiCheckpointsDir(),
+      targetSessionId,
+      paths,
+    })
+    if (failed.length > 0) {
+      console.warn(`[Agent 会话] 分叉会话 ${targetSessionId} 有 ${failed.length} 份基线未迁移，仍引用源会话 ${sourceSessionId}`)
+    }
+    return Object.fromEntries(
+      Object.entries(inherited).map(([entryId, checkpointPath]) => [entryId, adopted[checkpointPath] ?? checkpointPath]),
+    )
+  } catch (error) {
+    console.warn('[Agent 会话] 迁移分叉会话基线失败，保留源会话引用:', error)
+    return inherited
+  }
 }
 
 /**
@@ -1318,7 +1475,12 @@ export async function rewindPiSession(
     throw new Error('该消息无法作为回退点（可能属于子代理执行过程或已被清理）。请选择主对话中的其他消息再试')
   }
 
-  // 2. 物理截断 Pi session 文件：header + root→目标 entry 的主路径
+  // 2. 先验证目标 Pi entry，并生成准备原子替换的 transcript 内容。
+  // 文件恢复必须等到这里成功之后再开始，避免 transcript 已损坏时只改了工作区。
+  let fileRewind: RewindSessionResult['fileRewind']
+  const checkpointPath = sessionMeta.piFileCheckpoints?.[entryId]
+
+  // 3. 物理截断 Pi session 文件：header + root→目标 entry 的主路径
   const sdk = await import('@earendil-works/pi-coding-agent')
   const sessionDir = join(getSdkConfigDir(), 'sessions', 'pi')
   const workspace = sessionMeta.workspaceId ? getAgentWorkspace(sessionMeta.workspaceId) : undefined
@@ -1334,6 +1496,37 @@ export async function rewindPiSession(
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
       .map((entry) => JSON.stringify(entry))
       .join('\n') + '\n'
+
+  // 先恢复文件。旧会话没有 checkpoint 时仍允许对话回退并给出明确降级；
+  // 只有当前状态/tree 无法安全比较时才必须取消整个 rewind，避免对话已截断而文件未知。
+  if (!checkpointPath) {
+    fileRewind = { canRewind: false, error: '该 Pi turn 没有文件检查点（旧会话或检查点创建失败）' }
+  } else {
+    let restored: ReturnType<typeof restorePiFileCheckpoint> | undefined
+    try {
+      const workspace = sessionMeta.workspaceId ? getAgentWorkspace(sessionMeta.workspaceId) : undefined
+      const cwd = workspace ? getAgentSessionWorkspacePath(workspace.slug, sessionId) : process.cwd()
+      restored = restorePiFileCheckpoint(loadPiFileCheckpoint(checkpointPath), cwd)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[Agent 会话] Pi 文件恢复不可用，将只回退对话: ${message}`)
+      fileRewind = { canRewind: false, error: message }
+    }
+    if (restored) {
+      if (restored.failed) {
+        const message = restored.skipped.map((item) => `${item.path}: ${item.reason}`).join('；') || '无法安全恢复文件检查点'
+        console.warn(`[Agent 会话] Pi 文件恢复不安全，已保留对话历史: ${message}`)
+        throw new Error(`文件恢复不可用，已取消对话回退: ${message}`)
+      }
+      fileRewind = {
+        canRewind: true,
+        filesChanged: restored.changed,
+        ...(restored.skipped.length > 0 && { skippedFiles: restored.skipped.map((item) => item.path) }),
+        ...(restored.incomplete && { incomplete: true }),
+      }
+    }
+  }
+
   // 先写临时文件再原子替换，避免回退过程中进程退出留下半截 Pi transcript。
   const tempSessionFile = `${piSessionFile}.rewind-${process.pid}-${Date.now()}.tmp`
   try {
@@ -1343,22 +1536,6 @@ export async function rewindPiSession(
     if (existsSync(tempSessionFile)) unlinkSync(tempSessionFile)
   }
   console.log(`[Agent 会话] Pi session 已截断: sessionId=${sessionId}, 保留 ${keptEntries.length} 条 entry (entry=${entryId})`)
-
-  // 3. 恢复该 Pi turn 开始前的工作区文件状态。检查点覆盖 Pi 原生工具、Bash
-  //    以及其他通过当前 cwd 落盘的修改；旧会话没有检查点时明确降级。
-  let fileRewind: RewindSessionResult['fileRewind']
-  const checkpointPath = sessionMeta.piFileCheckpoints?.[entryId]
-  try {
-    const workspace = sessionMeta.workspaceId ? getAgentWorkspace(sessionMeta.workspaceId) : undefined
-    const cwd = workspace ? getAgentSessionWorkspacePath(workspace.slug, sessionId) : process.cwd()
-    if (!checkpointPath) throw new Error('该 Pi turn 没有文件检查点（旧会话或检查点创建失败）')
-    const filesChanged = restorePiFileCheckpoint(loadPiFileCheckpoint(checkpointPath), cwd)
-    fileRewind = { canRewind: true, filesChanged }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.warn(`[Agent 会话] Pi 文件恢复失败，继续回退对话: ${message}`)
-    fileRewind = { canRewind: false, error: message }
-  }
 
   // 4. 截断 Profer 展示 JSONL（与 Pi 文件保持一致）
   const kept = truncateSDKMessages(sessionId, cutMessageUuid)
@@ -1372,6 +1549,15 @@ export async function rewindPiSession(
   const keptCheckpoints = Object.fromEntries(
     Object.entries(sessionMeta.piFileCheckpoints ?? {}).filter(([mappedEntryId]) => keptEntryIds.has(mappedEntryId)),
   )
+  // 被截断 turn 的检查点已无人引用，立即回收（每轮一份基线，不回收会持续占盘）。
+  // 分叉会话可能仍在引用本会话的检查点，必须把它们视为“已绑定”，否则分叉侧的回退点会失效。
+  try {
+    const keepPaths = new Set(Object.values(keptCheckpoints))
+    for (const foreign of collectForeignCheckpointPaths(sessionId)) keepPaths.add(foreign)
+    prunePiFileCheckpoints(getPiCheckpointsDir(), sessionId, { keepPaths })
+  } catch (error) {
+    console.warn('[Agent 会话] 回收 Pi 文件检查点失败:', error)
+  }
   updateAgentSessionMeta(sessionId, {
     piEntryBindings: keptBindings,
     piFileCheckpoints: keptCheckpoints,

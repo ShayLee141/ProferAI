@@ -103,9 +103,10 @@ import {
   resolveUserUuidFromSDK,
   rewindFilesFromSnapshot,
   rewindPiSession,
+  collectForeignCheckpointPaths,
 } from './agent-session-manager'
 import { normalizeAgentEndReason } from './agent-end-reason'
-import { createPiFileCheckpoint } from './pi-file-checkpoint'
+import { createPiFileCheckpoint, prunePiFileCheckpoints } from './pi-file-checkpoint'
 import {
   getAgentWorkspace,
   getWorkspaceMcpConfig,
@@ -113,7 +114,7 @@ import {
   getWorkspaceMemoryArchivePath,
   ensurePluginManifest,
 } from './agent-workspace-manager'
-import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getBundledCliPath } from './config-paths'
+import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getPiCheckpointsDir, getSdkConfigDir, getBundledCliPath } from './config-paths'
 import { getRuntimeSkillsPath, prepareRuntimeSkills } from './global-skill-manager'
 import { normalizeDefaultSkillSlug } from './default-skill-slugs'
 import { getRuntimeStatus } from './runtime-init'
@@ -1764,10 +1765,19 @@ ${enrichedMessage}`
       const piSystemPrompt = systemPromptAppend
       // Pi 没有 Claude 的 file-history-snapshot；在每轮开始前保存工作区基线。
       // 编排层在该轮落盘后把基线绑定到 assistant entry，回退时由 session manager 恢复。
-      const piCheckpointRoot = join(agentCwd, '.profer-pi-checkpoints')
-      const piTurnCheckpoint = agentRuntime === 'pi'
-        ? createPiFileCheckpoint(sessionId, agentCwd, piCheckpointRoot)
-        : undefined
+      // 基线存放在配置目录而非会话 cwd 内：它每轮一份全量副本，放进用户工作台会污染体积、
+      // 且把快照目录放在被快照的树里本身就是隐患。
+      let piCheckpointRoot: string | undefined
+      let piTurnCheckpoint: ReturnType<typeof createPiFileCheckpoint> | undefined
+      if (agentRuntime === 'pi') {
+        // 文件回退是增强能力，绝不能因为权限、磁盘或第三方锁导致本轮模型请求失败。
+        try {
+          piCheckpointRoot = getPiCheckpointsDir()
+          piTurnCheckpoint = createPiFileCheckpoint(sessionId, agentCwd, piCheckpointRoot)
+        } catch (error) {
+          console.warn(`[Agent 编排] Pi 文件检查点创建失败，本轮继续但不可文件回退 (${sessionId}):`, error)
+        }
+      }
       const queryOptions: AgentQueryInput & Record<string, unknown> = {
         sessionId,
         agentRuntime,
@@ -1934,12 +1944,26 @@ ${enrichedMessage}`
           if (piTurnCheckpoint) {
             for (const entryId of Object.values(bindings)) checkpoints[entryId] = piTurnCheckpoint.path
           }
+          // 每轮顺带回收检查点：未被回退点引用的目录直接删除，超出数量/体积上限的旧检查点
+          // 一并删除并从映射里摘掉（该回退点会明确降级提示，而不是磁盘无限增长）。
+          // 本轮新快照无论如何都在保留集内：bindings 为空时也不能把自己当孤儿删掉。
+          // 分叉会话仍在引用的检查点同样视为已绑定，避免删掉别人还在用的回退点。
+          const keepPaths = new Set(Object.values(checkpoints))
+          if (piTurnCheckpoint) keepPaths.add(piTurnCheckpoint.path)
+          for (const foreign of collectForeignCheckpointPaths(sessionId)) keepPaths.add(foreign)
+          const prune = piTurnCheckpoint && piCheckpointRoot
+            ? prunePiFileCheckpoints(piCheckpointRoot, sessionId, { keepPaths })
+            : { removed: [], removedBound: 0 }
+          const removedPaths = new Set(prune.removed)
+          const keptCheckpoints = removedPaths.size > 0
+            ? Object.fromEntries(Object.entries(checkpoints).filter(([, checkpointPath]) => !removedPaths.has(checkpointPath)))
+            : checkpoints
           updateAgentSessionMeta(sessionId, {
             piEntryBindings: {
               ...(latest?.piEntryBindings ?? {}),
               ...bindings,
             },
-            ...(piTurnCheckpoint ? { piFileCheckpoints: checkpoints } : {}),
+            ...(piTurnCheckpoint ? { piFileCheckpoints: keptCheckpoints } : {}),
           })
         },
         onRetry: (retry: PiRetryUpdate) => {

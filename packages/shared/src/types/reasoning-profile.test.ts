@@ -33,4 +33,20 @@ describe('GLM-5.3 reasoning profile', () => {
     expect(profile?.levels).toEqual(['off', 'high', 'max'])
     expect(profile?.encodings['openai-completions']?.kind).toBe('zai-thinking-effort')
   })
+
+  test('Given DeepSeek 官方短名 When resolving Then 与同代正式 ID 得到同一档位协议', () => {
+    const flashAlias = resolveReasoningProfile({ modelId: 'deepseek-flash', transport: 'anthropic-messages' })
+    const flashOfficial = resolveReasoningProfile({ modelId: 'deepseek-v4-flash', transport: 'anthropic-messages' })
+    const proAlias = resolveReasoningProfile({ modelId: 'deepseek-pro', transport: 'anthropic-messages' })
+
+    expect(flashAlias?.id).toBe('deepseek-v4-flash')
+    expect(flashAlias?.encodings['anthropic-messages']?.kind).toBe('deepseek-output-effort')
+    expect(flashAlias).toEqual(flashOfficial)
+    expect(proAlias?.id).toBe('deepseek-v4-pro')
+  })
+
+  test('Given DeepSeek 旧世代模型 When resolving Then 短名别名不误扩档位', () => {
+    expect(resolveReasoningProfile({ modelId: 'deepseek-chat', transport: 'anthropic-messages' })).toBeUndefined()
+    expect(resolveReasoningProfile({ modelId: 'deepseek-reasoner', transport: 'anthropic-messages' })).toBeUndefined()
+  })
 })

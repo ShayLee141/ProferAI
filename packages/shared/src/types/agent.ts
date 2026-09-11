@@ -1372,6 +1372,10 @@ export interface RewindSessionResult {
     canRewind: boolean
     error?: string
     filesChanged?: string[]
+    /** 因被占用/超大而未能快照或恢复的文件（Pi 检查点），提示用户这些文件未被回退 */
+    skippedFiles?: string[]
+    /** 基线不完整，因此回退只恢复已知文件且不删除无法确认的新增内容。 */
+    incomplete?: boolean
     insertions?: number
     deletions?: number
   }

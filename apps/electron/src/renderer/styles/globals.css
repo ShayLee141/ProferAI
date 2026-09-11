@@ -2946,12 +2946,19 @@
     overflow-y: hidden;
     flex-shrink: 0;
   }
+  body.tablet-mode .settings-nav-header {
+    display: none;
+  }
   body.tablet-mode .settings-nav nav {
     flex-direction: row;
     gap: 2px;
   }
   body.tablet-mode .settings-nav nav button {
     white-space: nowrap;
+  }
+  body.tablet-mode .settings-main-header {
+    min-height: 56px;
+    padding: 14px 20px 8px;
   }
   body.tablet-mode .tablet-settings-dialog .px-6 {
     padding-left: 20px;
@@ -2997,6 +3004,10 @@
 }
 
 @container (max-width: 720px) {
+  .agent-conversation .sticky-user-banner {
+    margin-left: 6px;
+  }
+
   .agent-conversation .message-item .message-content,
   .agent-conversation .message-item .file-changes-summary,
   .agent-conversation .message-item .agent-turn-actions,

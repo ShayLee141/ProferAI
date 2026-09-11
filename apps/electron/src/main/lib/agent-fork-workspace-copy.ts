@@ -6,11 +6,11 @@ const FORK_WORKSPACE_COPY_BLOCKLIST = new Set([
   '.DS_Store',
   '.git',
   'node_modules',
+  // Pi 检查点：每轮一份全量快照，且现已存放在配置目录下；
+  // 历史会话残留在 cwd 内的旧检查点也不应随分叉复制一遍
+  '.profer-pi-checkpoints',
   '.venv',
   'venv',
-  'dist',
-  'build',
-  'out',
   '.next',
   '.nuxt',
   '.cache',

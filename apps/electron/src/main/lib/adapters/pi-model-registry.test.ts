@@ -254,6 +254,29 @@ describe('Pi runtime DeepSeek V4 1M 上下文', () => {
     expect(result.model.contextWindow).toBe(1_000_000)
   })
 
+  test('Given DeepSeek 官方短名 deepseek-flash When 注册 Pi 模型 Then 沿用同代 catalog 元数据但保留原始模型 ID', async () => {
+    const sdk = await import('@earendil-works/pi-coding-agent')
+    const result = await buildModel(sdk, {
+      sessionId: 'session-deepseek-short-name',
+      prompt: 'hi',
+      apiKey: 'sk-test',
+      provider: 'deepseek',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-flash',
+      permissionMode: 'plan',
+      systemPrompt: 'system',
+      piAgentDir: '/tmp/pi-agent',
+      piSessionDir: '/tmp/pi-session',
+    })
+
+    // 请求仍用用户填写的短名（上游只认短名），元数据借同代正式 ID
+    expect(result.model.id).toBe('deepseek-flash')
+    expect(result.model.contextWindow).toBe(1_000_000)
+    expect(result.model.maxTokens).toBe(384_000)
+    expect(result.model.cost.input).toBe(0.14)
+    expect(result.model.reasoning).toBe(true)
+  })
+
   test('Given custom provider 填写完整 Chat Completions 端点 When 注册 Pi 模型 Then 保留协议根地址并使用保守窗口', async () => {
     const sdk = await import('@earendil-works/pi-coding-agent')
     const result = await buildModel(sdk, {
