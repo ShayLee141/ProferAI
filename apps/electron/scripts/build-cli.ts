@@ -104,6 +104,28 @@ try {
   }
 }
 
+// macOS arm64 内核要求主可执行档必须带有有效签名，否则 AMFI 会直接 SIGKILL：
+// 进程无任何输出、退出码为 137，且不一定有系统提示，极难排查。
+// `bun build --compile` 产出的是链接期 ad-hoc 签名的二进制，Bun 随后追加内嵌
+// payload 会把该签名置为 invalid（codesign --verify 报 code or signature have
+// been modified），因此必须重新 ad-hoc 签名。
+// 正式发布路径下 electron-builder 会用 Developer ID 重新签名，不受此步骤影响。
+if (process.platform === 'darwin') {
+  const signResult = spawnSync(
+    'codesign',
+    ['--force', '--sign', '-', '--timestamp=none', outFile],
+    { stdio: 'inherit' },
+  )
+  if (signResult.status !== 0) {
+    fail(`对 ${binName} 重新 ad-hoc 签名失败（exit ${signResult.status}）`)
+  }
+  const verifyResult = spawnSync('codesign', ['--verify', '--strict', outFile], { stdio: 'pipe' })
+  if (verifyResult.status !== 0) {
+    fail(`ad-hoc 签名后校验未通过: ${verifyResult.stderr?.toString().trim() || '未知错误'}`)
+  }
+  console.log(`${color.dim}[build:cli] 已重新 ad-hoc 签名并通过 codesign --verify --strict${color.reset}`)
+}
+
 const sizeMb = (statSync(outFile).size / 1024 / 1024).toFixed(0)
 const elapsed = ((Date.now() - started) / 1000).toFixed(1)
 console.log(
