@@ -1022,7 +1022,9 @@ export async function handleRemoteCommand(
       const provider = typeof parsed.provider === 'string' ? parsed.provider : ''
       const modelId = typeof parsed.modelId === 'string' ? parsed.modelId : undefined
       if (!provider) return { ok: false, error: '缺少 provider' }
-      return { ok: true, data: resolvePiReasoningCapability(provider as import('@profer/shared').ProviderType, modelId) }
+      // resolvePiReasoningCapability 是异步的（需读 pi-ai 目录），必须 await，
+      // 否则 data 会变成 Promise 而被 JSON 序列化成 {}。
+      return { ok: true, data: await resolvePiReasoningCapability(provider as import('@profer/shared').ProviderType, modelId) }
     }
 
     // 工作区文件检索（Pocket `@` 引用）：桌面端由 renderer 提交 rootPath/additionalPaths
