@@ -2946,12 +2946,19 @@
     overflow-y: hidden;
     flex-shrink: 0;
   }
+  body.tablet-mode .settings-nav-header {
+    display: none;
+  }
   body.tablet-mode .settings-nav nav {
     flex-direction: row;
     gap: 2px;
   }
   body.tablet-mode .settings-nav nav button {
     white-space: nowrap;
+  }
+  body.tablet-mode .settings-main-header {
+    min-height: 56px;
+    padding: 14px 20px 8px;
   }
   body.tablet-mode .tablet-settings-dialog .px-6 {
     padding-left: 20px;
@@ -2988,8 +2995,8 @@
 }
 
 /* ===== 窄屏 Agent：消息内容向头像侧收拢 =====
- * 消息头部仍保留头像、模型名/用户名和时间；正文、思考/执行过程、复制操作栏、
- * 文件改动汇总以及悬浮置顶条不再为头像额外预留 46px，避免窄窗口下内容整体被推到右侧。
+ * 消息头部仍保留头像、模型名/用户名和时间；正文、思考/执行过程、复制操作栏以及
+ * 文件改动汇总不再为头像额外预留 46px，避免窄窗口下内容整体被推到右侧。
  * 使用容器查询而不是 viewport 查询，兼容右侧面板打开后主对话区变窄的桌面布局。
  */
 .agent-conversation {
