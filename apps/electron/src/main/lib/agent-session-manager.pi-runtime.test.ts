@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { appendPiHarnessEvent } from './pi-harness/pi-harness-store'
 import { PI_HARNESS_EVENT_VERSION, type PiHarnessEvent } from './pi-harness/types'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createPiFileCheckpoint, loadPiFileCheckpoint, restorePiFileCheckpoint } from './pi-file-checkpoint'
 
 // 会话管理器经 workspace 服务间接导入 Electron；Bun 单测需提供最小主进程 mock。
 mock.module('electron', () => ({
@@ -202,6 +203,50 @@ describe('Pi runtime 会话持久化隔离', () => {
     expect(restored.forkSourceSdkSessionId).toBe('claude-source')
     expect(restored.forkSourceDir).toBe('C:/source')
     expect(restored.resumeAtMessageUuid).toBe('assistant-uuid')
+  })
+
+  test('Given a Pi session changes runtime When updating Then checkpoint bindings are cleared and snapshots are reclaimed', () => {
+    const meta = sessions.createAgentSession('runtime checkpoint cleanup', undefined, undefined, undefined, 'pi')
+    const cwd = join(root, 'cwd')
+    mkdirSync(cwd)
+    writeFileSync(join(cwd, 'file.txt'), 'baseline')
+    const checkpoint = createPiFileCheckpoint(meta.id, cwd, configPaths.getPiCheckpointsDir())
+    sessions.updateAgentSessionMeta(meta.id, { piFileCheckpoints: { 'entry-1': checkpoint.path } })
+
+    const switched = sessions.updateAgentSessionMeta(meta.id, { agentRuntime: 'claude' })
+    expect(switched.piFileCheckpoints).toBeUndefined()
+    expect(existsSync(checkpoint.path)).toBe(false)
+  })
+
+  test('Given a legacy fork still references source checkpoints When deleting source Then references are migrated before source cleanup', () => {
+    const source = sessions.createAgentSession('checkpoint source', undefined, undefined, undefined, 'pi')
+    const target = sessions.createAgentSession('legacy checkpoint fork', undefined, undefined, undefined, 'pi')
+    const cwd = join(root, 'cwd')
+    mkdirSync(cwd)
+    writeFileSync(join(cwd, 'file.txt'), 'baseline')
+    const checkpoint = createPiFileCheckpoint(source.id, cwd, configPaths.getPiCheckpointsDir())
+    sessions.updateAgentSessionMeta(target.id, { piFileCheckpoints: { 'entry-1': checkpoint.path } })
+
+    sessions.deleteAgentSession(source.id)
+    const migrated = sessions.getAgentSessionMeta(target.id)?.piFileCheckpoints?.['entry-1']
+    expect(migrated).toBeTruthy()
+    expect(migrated).not.toBe(checkpoint.path)
+    expect(existsSync(migrated!)).toBe(true)
+    expect(existsSync(checkpoint.path)).toBe(false)
+
+    writeFileSync(join(cwd, 'file.txt'), 'changed')
+    restorePiFileCheckpoint(loadPiFileCheckpoint(migrated!), cwd)
+    expect(readFileSync(join(cwd, 'file.txt'), 'utf8')).toBe('baseline')
+  })
+
+  test('Given a legacy fork references a missing source checkpoint When deleting source Then its stale binding is removed', () => {
+    const source = sessions.createAgentSession('missing checkpoint source', undefined, undefined, undefined, 'pi')
+    const target = sessions.createAgentSession('missing checkpoint fork', undefined, undefined, undefined, 'pi')
+    const missing = join(configPaths.getPiCheckpointsDir(), source.id, 'missing.json')
+    sessions.updateAgentSessionMeta(target.id, { piFileCheckpoints: { 'entry-1': missing } })
+
+    sessions.deleteAgentSession(source.id)
+    expect(sessions.getAgentSessionMeta(target.id)?.piFileCheckpoints).toBeUndefined()
   })
 
   test('Given a runtime switch When a stale SDK callback tries to save an ID Then it cannot restore the previous runtime session ID', () => {

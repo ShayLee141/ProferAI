@@ -2880,9 +2880,24 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
 
       if (result.fileRewind?.canRewind) {
         const fileCount = result.fileRewind.filesChanged?.length ?? 0
-        toast.success('已回退到此处', {
-          description: fileCount > 0 ? `${fileCount} 个文件已恢复` : '文件无变化',
-        })
+        // 被浏览器/数据库等进程占用的文件无法进入快照，回退时必须明确告知，
+        // 否则用户会误以为工作区已完全回到该时刻
+        const skippedCount = result.fileRewind.skippedFiles?.length ?? 0
+        const incomplete = result.fileRewind.incomplete === true
+        if (skippedCount > 0 || incomplete) {
+          const details = [
+            `${fileCount} 个文件已恢复`,
+            ...(skippedCount > 0 ? [`${skippedCount} 个文件被占用或过大而未回退`] : []),
+            ...(incomplete ? ['基线不完整，未确认的新增文件已保留'] : []),
+          ]
+          toast.warning('已回退到此处', {
+            description: details.join('；'),
+          })
+        } else {
+          toast.success('已回退到此处', {
+            description: fileCount > 0 ? `${fileCount} 个文件已恢复` : '文件无变化',
+          })
+        }
       } else if (result.fileRewind?.error) {
         toast.warning('已回退对话', {
           description: `文件恢复不可用：${result.fileRewind.error}`,

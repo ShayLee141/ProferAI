@@ -849,7 +849,7 @@ export function installElectronApiStub(): void {
     },
     rewindSession: async (input: { sessionId: string; assistantMessageUuid: string }) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
-      return remoteClient.rewindSession(input) as Promise<{ remainingMessages: number; fileRewind?: { canRewind: boolean; error?: string; filesChanged?: string[]; insertions?: number; deletions?: number } }>
+      return remoteClient.rewindSession(input) as Promise<{ remainingMessages: number; fileRewind?: { canRewind: boolean; error?: string; filesChanged?: string[]; skippedFiles?: string[]; incomplete?: boolean; insertions?: number; deletions?: number } }>
     },
     // 置顶/归档/移动/推理档位：走 remote 指令（对齐桌面 IPC 语义），
     // 必须显式 stub——否则 Proxy noop 会让“置顶/归档成功”是假的，
