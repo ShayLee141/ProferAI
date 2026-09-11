@@ -79,5 +79,6 @@ jobs:
             apps/electron/out/latest-mac.yml
             apps/electron/out/*.dmg
             apps/electron/out/*.zip
+            apps/electron/out/*.blockmap
           if-no-files-found: error
           retention-days: 14

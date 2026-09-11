@@ -7,6 +7,8 @@
  * - 支持只构建当前架构（--current-arch）加速开发测试
  * - 支持详细输出模式（--verbose）查看 electron-builder 完整日志
  * - 支持跳过代码签名（--no-sign，Mac 验收包专用）
+ * - macOS 一律在打包后补做 ad-hoc 签名并钉死 designated requirement；
+ *   无签名包会导致 Squirrel.Mac 静默拒绝所有自更新（见 scripts/macos-signature.cjs）
  * - 支持只构建 DMG 或 ZIP（--dmg / --zip）
  *
  * 使用：
@@ -194,11 +196,11 @@ function main(): void {
   console.log(`  ${color.bold}平台${color.reset}:     ${opts.platform}`)
   console.log(`  ${color.bold}架构${color.reset}:     ${opts.currentArch ? arch + ' (仅当前)' : opts.platform === 'mac' ? 'arm64' : 'arm64 + x64'}`)
   console.log(`  ${color.bold}格式${color.reset}:     ${opts.targetFormat}`)
-  console.log(`  ${color.bold}签名${color.reset}:     ${opts.noSign ? '跳过（验收包）' : '启用（发布包）'}`)
+  console.log(`  ${color.bold}签名${color.reset}:     ${opts.noSign ? '强制 ad-hoc + 钉死 DR（验收包）' : '优先真实身份，缺失时 ad-hoc + 钉死 DR'}`)
   console.log(`  ${color.bold}详细日志${color.reset}: ${opts.verbose ? '开启' : '关闭'}`)
   printSeparator()
 
-  const totalSteps = opts.platform === 'mac' ? 8 : 7
+  const totalSteps = opts.platform === 'mac' ? 9 : 7
   let step = 0
 
   // ── 步骤 1: 构建主进程 ──
@@ -271,10 +273,10 @@ function main(): void {
     builderArgs.push(`--${arch}`)
   }
 
-  // 正式 macOS 更新包必须是可验证的签名包；无签名只允许通过 dist:mac 验收命令生成。
-  if (opts.platform === 'mac' && !opts.noSign) {
-    builderArgs.push('--config.forceCodeSigning=true')
-  }
+  // macOS 的签名由 electron-builder.yml 的 afterSign 钩子统一负责：
+  // 有真实 Developer ID 身份时用它，没有时补 ad-hoc 并把 designated requirement
+  // 钉死为 bundle id。因此这里不再要求 forceCodeSigning —— 无 Developer ID 时它必然
+  // 失败，而“包必须可验证”的约束改由构建后的 verify:mac-signature 对真实产物断言。
 
   // 指定输出格式
   if (opts.targetFormat === 'dmg') {
@@ -308,6 +310,14 @@ function main(): void {
     printStepStart(step, totalSteps, '验证 macOS 安装包资源闭包')
     results.push(
       runStep('验证 macOS 安装包', 'bun', ['run', 'verify:mac-package'], { verbose: opts.verbose })
+    )
+    printStepResult(results[results.length - 1])
+    if (!results[results.length - 1].success) return printSummary(results)
+
+    step++
+    printStepStart(step, totalSteps, '验证 macOS 签名契约（ad-hoc + 钉死 DR）')
+    results.push(
+      runStep('验证 macOS 签名', 'bun', ['run', 'verify:mac-signature'], { verbose: true })
     )
     printStepResult(results[results.length - 1])
   }

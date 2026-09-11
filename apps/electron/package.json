@@ -57,6 +57,7 @@
     "dist:mac": "bun run scripts/dist.ts --mac --current-arch --no-sign",
     "dist:mac-release": "bun run scripts/dist.ts --mac --current-arch",
     "verify:mac-package": "node scripts/verify-macos-package.cjs",
+    "verify:mac-signature": "node scripts/verify-macos-signature.cjs",
     "dist:visual": "bun run scripts/dist.ts",
     "dist:fast": "bun run scripts/dist.ts --current-arch",
     "dist:debug": "bun run scripts/dist.ts --current-arch --verbose"

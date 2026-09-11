@@ -2,8 +2,15 @@
 /**
  * Profer macOS 发布（Apple Silicon + 国内更新源 + GitHub Release）。
  *
- * 必须在 macOS arm64 上运行。自动更新依赖有效的 Developer ID 签名和
- * notarization；脚本拒绝把无签名验收包上传到更新源。
+ * 必须在 macOS arm64 上运行。自动更新的硬门槛是“包可验证 + 顶层 designated
+ * requirement 钉死为 identifier "com.profer.app"”（见
+ * apps/electron/scripts/macos-signature.cjs），构建时由 afterSign 钩子保证，
+ * 本脚本上传前再断言一次。
+ *
+ * 不要求 Developer ID / notarization：ad-hoc 签名即可满足 Squirrel.Mac；
+ * spctl 评估对 ad-hoc 必然 rejected，也与自更新无关，因此不再作为门禁。
+ * 一旦将来接入真实签名，同一个断言会自然地要求真实签名的产物，无需改这里。
+ *
  * 用法：node scripts/push-mac-release.cjs <版本号>
  */
 const { execSync } = require('node:child_process')
@@ -11,15 +18,14 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { assertWindowsReleaseReady } = require('./release-asset-contract.cjs')
+// 与构建时的 afterSign 钩子共用同一份签名契约，避免门禁与产物实现漂移。
+const { assertMacSignatureContract } = require('../apps/electron/scripts/macos-signature.cjs')
 
 const VERSION = process.argv[2]
 if (!VERSION) throw new Error('用法：node scripts/push-mac-release.cjs <版本号>')
 if (!/^\d+\.\d+\.\d+$/.test(VERSION)) throw new Error(`版本号格式非法：${VERSION}`)
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
   throw new Error(`macOS 发布必须在 darwin-arm64 上运行，当前为 ${process.platform}-${process.arch}`)
-}
-if (process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') {
-  throw new Error('检测到 CSC_IDENTITY_AUTO_DISCOVERY=false；无签名包禁止进入 macOS 更新源')
 }
 
 const ROOT = path.resolve(__dirname, '..')
@@ -45,21 +51,27 @@ function findMacAssets() {
   const metadata = path.join(OUT, MAC_UPDATE_METADATA)
   const zip = path.join(OUT, `Profer-${VERSION}-arm64-mac.zip`)
   const dmg = path.join(OUT, `Profer-${VERSION}-arm64.dmg`)
-  for (const filePath of [metadata, zip, dmg]) assertExists(filePath)
-  return [metadata, zip, dmg]
+  // 增量下载依赖 ZIP 旁边的 .zip.blockmap；缺它会让每次更新都退化成全量下载。
+  const blockmap = `${zip}.blockmap`
+  for (const filePath of [metadata, zip, dmg, blockmap]) assertExists(filePath)
+  return [metadata, zip, dmg, blockmap]
 }
 
-function assertSignedApp() {
+function findAppBundle() {
   const direct = path.join(OUT, 'Profer.app')
   const nested = fs.existsSync(OUT)
     ? fs.readdirSync(OUT, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => path.join(OUT, entry.name, 'Profer.app'))
     : []
-  const appPath = [direct, ...nested].find((candidate) => fs.existsSync(candidate))
-  if (!appPath) throw new Error(`未找到 macOS 解包产物：${direct}`)
-  run(`codesign --verify --deep --strict --verbose=2 ${JSON.stringify(appPath)}`)
-  run(`spctl --assess --type execute --verbose=2 ${JSON.stringify(appPath)}`)
+  return [direct, ...nested].find((candidate) => fs.existsSync(candidate)) ?? null
+}
+
+function assertSignedApp() {
+  const appPath = findAppBundle()
+  if (!appPath) throw new Error(`未找到 macOS 解包产物：${path.join(OUT, 'Profer.app')}`)
+  const result = assertMacSignatureContract(appPath)
+  console.log(`  签名契约通过：DR=${result.designatedRequirement}（嵌套 App ${result.nestedAppCount} 个）`)
 }
 
 function readReleaseAssets() {
@@ -85,19 +97,22 @@ function ensureGitHubAssets(assetPaths) {
   run('bun run typecheck')
   run('bun test --isolate --timeout 30000')
   run('bun run dist:mac-release', ELECTRON)
-  const [metadata, zip, dmg] = findMacAssets()
+  const [metadata, zip, dmg, blockmap] = findMacAssets()
   assertSignedApp()
   run('bun run verify:mac-package', ELECTRON)
+  run('bun run verify:mac-signature', ELECTRON)
   run('node scripts/verify-macos-update-assets.cjs', ELECTRON)
 
   // 构建可能耗时较久；任何远程写入前再次确认 Windows Release 仍满足契约。
   assertWindowsReleaseReady(readReleaseAssets(), VERSION)
   console.log(`[1/2] 上传 macOS 更新资产到 ${UPDATE_FEED_URL}`)
-  for (const filePath of [metadata, zip, dmg]) upload(filePath, `/tmp/${path.basename(filePath)}`)
-  remote(`sudo mkdir -p ${UPDATE_DIR} && sudo cp /tmp/${path.basename(metadata)} ${UPDATE_DIR}/ && sudo cp /tmp/${path.basename(zip)} ${UPDATE_DIR}/ && sudo cp /tmp/${path.basename(dmg)} ${UPDATE_DIR}/ && sudo chmod -R 755 ${UPDATE_DIR}`)
+  const uploadedNames = [metadata, zip, dmg, blockmap].map((filePath) => path.basename(filePath))
+  for (const filePath of [metadata, zip, dmg, blockmap]) upload(filePath, `/tmp/${path.basename(filePath)}`)
+  const copyCommands = uploadedNames.map((name) => `sudo cp /tmp/${name} ${UPDATE_DIR}/`).join(' && ')
+  remote(`sudo mkdir -p ${UPDATE_DIR} && ${copyCommands} && sudo chmod -R 755 ${UPDATE_DIR}`)
 
   console.log('[2/2] 上传 GitHub Release macOS 资产')
-  ensureGitHubAssets([metadata, zip, dmg])
+  ensureGitHubAssets([metadata, zip, dmg, blockmap])
   console.log(`=== macOS 发布完成 ${TAG} ===`)
 })().catch((error) => {
   console.error(`macOS 发布失败：${error.message}`)
