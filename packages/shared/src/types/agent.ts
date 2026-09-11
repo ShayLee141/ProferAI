@@ -684,10 +684,23 @@ export type ProferEvent =
 /** 外部入口触发 Agent 运行的来源 */
 export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'delegation' | 'automation'
 
-/** IPC 传输的统一 payload（替代 AgentEvent） */
+/** 可失效并重新拉取的目录类型（Pocket 收到失效通知后按 catalog 重新拉取列表）。 */
+export type AgentCatalogKind = 'channels' | 'presets' | 'workspace_capabilities' | 'workspaces'
+
+/** 目录失效通知：只发送失效信号，不广播配置正文（避免经 WS 外发渠道密钥 / 预设正文）。 */
+export interface AgentCatalogInvalidation {
+  kind: 'catalog_invalidation'
+  catalog: AgentCatalogKind
+  workspaceSlug: string | null
+  revision: number
+  changedAt: number
+}
+
+/** IPC 传输的统一 payload（替代 AgentEvent）；kind 是唯一分流依据 */
 export type AgentStreamPayload =
   | { kind: 'sdk_message'; message: SDKMessage }
   | { kind: 'profer_event'; event: ProferEvent }
+  | AgentCatalogInvalidation
 
 // ===== Agent 会话管理 =====
 
