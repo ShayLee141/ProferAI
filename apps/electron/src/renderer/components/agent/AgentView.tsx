@@ -423,8 +423,12 @@ function AgentRuntimeSelector({
           label={`Agent 内核：${current.label}`}
           tabletMode={tabletMode}
           disabled={disabled}
+          // 与模型选择器等「带文字工具」共用同一壳层尺寸约定：
+          // 内核是会话级模式指示，必须能一眼分辨 Claude / Pi，不能只留图标。
+          className="flex w-auto items-center gap-1.5 px-2 text-xs"
         >
-          <Bot className="size-5" />
+          <Bot className="size-5 shrink-0" />
+          <span className="truncate">{current.label}</span>
         </AgentComposerToolTrigger>
       }
     >
