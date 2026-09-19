@@ -148,7 +148,7 @@ function registerProtocolsAndHandlers(): void {
 
 
 import { getSettings, updateSettings } from './lib/settings-service'
-import { createStartupSplashHtml } from './lib/startup-splash'
+import { constrainStartupSplashBounds, createStartupSplashHtml } from './lib/startup-splash'
 import { handleProferFileRequest } from './lib/local-file-protocol'
 import { handleProferSkinRequest } from './lib/skin-service'
 import { disposeAgentPreviewRenderer } from './lib/agent-preview-renderer'
@@ -640,7 +640,8 @@ function createWindow(): void {
               height: initialBounds.height,
             }
           })()
-    const bounds = requestedBounds
+    const display = screen.getDisplayMatching(requestedBounds)
+    const bounds = constrainStartupSplashBounds(requestedBounds, display.workArea)
     startupSplashWindow = new BrowserWindow({
       x: bounds.x,
       y: bounds.y,

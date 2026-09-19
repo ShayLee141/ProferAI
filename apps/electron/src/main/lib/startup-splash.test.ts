@@ -1,6 +1,18 @@
 import { expect, test } from 'bun:test'
 
-import { createStartupSplashHtml } from './startup-splash'
+import { constrainStartupSplashBounds, createStartupSplashHtml } from './startup-splash'
+
+test('keeps initial Splash bounds inside the selected display work area', () => {
+  expect(constrainStartupSplashBounds(
+    { x: 1600, y: 20, width: 2200, height: 1400 },
+    { x: 0, y: 0, width: 1920, height: 1080 },
+  )).toEqual({ x: 0, y: 0, width: 1920, height: 1080 })
+
+  expect(constrainStartupSplashBounds(
+    { x: 1700, y: 40, width: 800, height: 900 },
+    { x: 0, y: 0, width: 1920, height: 1080 },
+  )).toEqual({ x: 1120, y: 40, width: 800, height: 900 })
+})
 
 test('emits a themed original WebGL startup splash', () => {
   const darkHtml = createStartupSplashHtml(true)
